@@ -9,7 +9,6 @@ const state = {
   product: "",
   productQuery: "",
   selectedCountry: "",
-  regionFocus: "",
 };
 
 const MAP_ZOOM = 1.4;
@@ -151,10 +150,19 @@ const ASIA = new Set([
 ]);
 
 const COUNTRY_ALIASES = new Map([
-  ["United States", "United States of America"],
-  ["Russian Federation", "Russia"],
   ["Czech Republic", "Czechia"],
+  ["Korea, Democratic People's Republic of", "North Korea"],
+  ["Korea, Republic of", "South Korea"],
+  ["Moldova, Republic of", "Moldova"],
+  ["Turkiye", "Turkey"],
   ["United Kingdom", "United Kingdom"],
+]);
+
+const KNOWN_COUNTRIES = new Set([
+  ...EU_COUNTRIES,
+  ...EUROPE_EXTRA,
+  ...AMERICAS,
+  ...ASIA,
 ]);
 
 const formatNumber = d3.format(",.0f");
@@ -169,20 +177,54 @@ const productLabelEl = d3.select("#productLabel");
 const mapLabelEl = d3.select("#mapLabel");
 const countryLabelEl = d3.select("#countryLabel");
 const tooltipEl = d3.select("#tooltip");
+const btnProductsEl = d3.select("#btnProducts");
+const productDropdownEl = d3.select("#productDropdown");
+
+let reporterSelectRef = null;
+let reporterSet = new Set();
+
+// Toggle product dropdown
+btnProductsEl.on("click", (event) => {
+  event.stopPropagation();
+  productDropdownEl.classed("open", !productDropdownEl.classed("open"));
+});
+
+// Close dropdown when clicking outside
+d3.select("body").on("click", () => {
+  productDropdownEl.classed("open", false);
+});
+
+productDropdownEl.on("click", (event) => {
+  event.stopPropagation();
+});
 
 const charts = {
-  regionPie: d3.select("#regionPie"),
   euPie: d3.select("#euPie"),
-  productLine: d3.select("#productLine"),
   map: d3.select("#map"),
   countryPie: d3.select("#countryPie"),
   countryLine: d3.select("#countryLine"),
+  countryLineLegend: d3.select("#countryLineLegend"),
   mapLegend: d3.select("#mapLegend"),
 };
 
+const stripDiacritics = (value) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
 const normalizeCountry = (name) => {
   if (!name) return "";
-  return COUNTRY_ALIASES.get(name) || name;
+  const trimmed = name.trim();
+  const asciiName = stripDiacritics(trimmed);
+  if (COUNTRY_ALIASES.has(trimmed)) return COUNTRY_ALIASES.get(trimmed);
+  if (COUNTRY_ALIASES.has(asciiName)) return COUNTRY_ALIASES.get(asciiName);
+
+  const parenIndex = trimmed.indexOf(" (");
+  if (parenIndex > 0) {
+    const base = trimmed.slice(0, parenIndex);
+    const baseAscii = stripDiacritics(base);
+    const resolvedBase = COUNTRY_ALIASES.get(base) || COUNTRY_ALIASES.get(baseAscii) || base;
+    if (KNOWN_COUNTRIES.has(resolvedBase)) return resolvedBase;
+  }
+
+  return trimmed;
 };
 
 const regionForCountry = (name) => {
@@ -198,6 +240,7 @@ const isEurope = (name) => {
   return EU_COUNTRIES.has(country) || EUROPE_EXTRA.has(country);
 };
 
+// Remove all DOM-TOM from france Map Polygone
 const pruneFranceOverseas = (feature) => {
   if (normalizeCountry(feature.properties.name) !== "France") return feature;
 
@@ -237,10 +280,16 @@ const productCategory = (name) => {
   return "Other";
 };
 
+const shortenProductLabel = (label, maxLength = 38) => {
+  if (!label) return "";
+  if (label.length <= maxLength) return label;
+  return `${label.slice(0, maxLength - 3).trim()}...`;
+};
+
 const parseRow = (d) => {
   const date = parseMonth(d.TIME_PERIOD);
   return {
-    reporter: d.reporter,
+    reporter: normalizeCountry(d.reporter),
     partner: normalizeCountry(d.partner),
     product: d.product,
     flow: d.flow,
@@ -276,8 +325,10 @@ const buildFilters = (data) => {
   const years = Array.from(new Set(data.map((d) => d.year))).sort(d3.ascending);
   const months = Array.from(new Set(data.map((d) => d.month))).sort(d3.ascending);
 
+  reporterSet = new Set(reporters);
+
   state.reporter = state.reporter || reporters[0] || "";
-  state.flow = state.flow || flows[0] || "";
+  state.flow = state.flow || "ALL";
   state.year = state.year || years[years.length - 1] || "";
   state.month = state.month || "";
 
@@ -290,15 +341,15 @@ const buildFilters = (data) => {
       render(data);
     }
   );
+  reporterSelectRef = reporterSelect;
 
-  const flowSelect = createSelect(
-    "Flow",
-    flows.map((d) => ({ label: d, value: d })),
-    (value) => {
-      state.flow = value;
-      render(data);
-    }
+  const flowOptions = [{ label: "Import & Export", value: "ALL" }].concat(
+    flows.map((d) => ({ label: d, value: d }))
   );
+  const flowSelect = createSelect("Flow", flowOptions, (value) => {
+    state.flow = value;
+    render(data);
+  });
 
   const yearSelect = createSelect(
     "Year",
@@ -337,6 +388,7 @@ const buildProductList = (products, data) => {
     .text((d) => d)
     .on("click", (event, d) => {
       state.product = d;
+      productDropdownEl.classed("open", false);
       render(data);
       buildProductList(products, data);
     });
@@ -345,7 +397,7 @@ const buildProductList = (products, data) => {
 const baseFilter = (data) => {
   return data.filter((d) => {
     if (state.reporter && d.reporter !== state.reporter) return false;
-    if (state.flow && d.flow !== state.flow) return false;
+    if (state.flow && state.flow !== "ALL" && d.flow !== state.flow) return false;
     return true;
   });
 };
@@ -445,7 +497,16 @@ const drawLine = (container, series, colors) => {
     .attr("d", (d) => line(d.values));
 };
 
-const drawMap = (container, features, values, flows, reporter) => {
+const drawLineLegend = (container, series, colors) => {
+  container.selectAll("*").remove();
+  if (!series.length) return;
+  const color = d3.scaleOrdinal().domain(series.map((d) => d.name)).range(colors);
+  const items = container.selectAll("span").data(series).enter().append("span");
+  items.append("i").style("background", (d) => color(d.name));
+  items.append("strong").text((d) => d.name);
+};
+
+const drawMap = (container, features, values, flows, reporter, flow, importValues, exportValues) => {
   const width = container.node().clientWidth;
   const height = container.node().clientHeight;
   container.selectAll("*").remove();
@@ -458,8 +519,19 @@ const drawMap = (container, features, values, flows, reporter) => {
     .translate([width / 2 + MAP_CENTER_OFFSET[0], height / 2 + MAP_CENTER_OFFSET[1]]);
   const path = d3.geoPath(projection);
 
-  const maxValue = d3.max(Object.values(values)) || 0;
-  const color = d3.scaleSequential().domain([0, maxValue || 1]).interpolator(d3.interpolateOrRd);
+  const maxImport = d3.max(Object.values(importValues)) || 0;
+  const maxExport = d3.max(Object.values(exportValues)) || 0;
+  const maxBoth = d3.max(
+    Object.keys(importValues).map((key) => {
+      const importValue = importValues[key] || 0;
+      const exportValue = exportValues[key] || 0;
+      return importValue > 0 && exportValue > 0 ? importValue + exportValue : 0;
+    })
+  ) || 0;
+
+  const importColor = d3.scaleSequential().domain([0, maxImport || 1]).interpolator(d3.interpolateYlGn);
+  const exportColor = d3.scaleSequential().domain([0, maxExport || 1]).interpolator(d3.interpolateYlOrRd);
+  const bothColor = d3.scaleSequential().domain([0, maxBoth || 1]).interpolator(d3.interpolatePurples);
 
   const centroids = new Map(
     features.map((feature) => {
@@ -481,13 +553,13 @@ const drawMap = (container, features, values, flows, reporter) => {
     .append("marker")
     .attr("id", arrowId)
     .attr("viewBox", "0 0 10 10")
-    .attr("refX", 9)
+    .attr("refX", 8)
     .attr("refY", 5)
-    .attr("markerWidth", 7)
-    .attr("markerHeight", 7)
+    .attr("markerWidth", 4)
+    .attr("markerHeight", 4)
     .attr("orient", "auto")
     .append("path")
-    .attr("d", "M 0 0 L 10 5 L 0 10 z")
+    .attr("d", "M 0 2 L 8 5 L 0 8 z")
     .attr("fill", "#1f1a16");
 
   const mapLayer = svg.append("g").attr("clip-path", `url(#${clipId})`);
@@ -498,8 +570,22 @@ const drawMap = (container, features, values, flows, reporter) => {
     .enter()
     .append("path")
     .attr("class", "country")
+    .classed("selected", (d) => normalizeCountry(d.properties.name) === state.selectedCountry)
     .attr("d", path)
-    .attr("fill", (d) => color(values[normalizeCountry(d.properties.name)] || 0))
+    .attr("fill", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      if (state.selectedCountry && name === state.selectedCountry) return "#cfe3ff";
+
+      const importValue = importValues[name] || 0;
+      const exportValue = exportValues[name] || 0;
+
+      if (flow === "IMPORT") return importValue > 0 ? importColor(importValue) : "#d8d3cb";
+      if (flow === "EXPORT") return exportValue > 0 ? exportColor(exportValue) : "#d8d3cb";
+      if (importValue > 0 && exportValue > 0) return "#f6e7a5";
+      if (importValue > 0) return importColor(importValue);
+      if (exportValue > 0) return exportColor(exportValue);
+      return "#d8d3cb";
+    })
     .style("cursor", "pointer")
     .on("mousemove", (event, d) => {
       const name = normalizeCountry(d.properties.name);
@@ -512,128 +598,119 @@ const drawMap = (container, features, values, flows, reporter) => {
     })
     .on("mouseleave", () => tooltipEl.style("opacity", 0))
     .on("click", (event, d) => {
-      state.selectedCountry = normalizeCountry(d.properties.name);
+      const clickedCountry = normalizeCountry(d.properties.name);
+      state.selectedCountry = clickedCountry;
+      if (reporterSet.has(clickedCountry)) {
+        state.reporter = clickedCountry;
+        if (reporterSelectRef) {
+          updateSelectValue(reporterSelectRef, state.reporter);
+        }
+      }
       render();
     });
 
-  const reporterPoint = reporter ? centroids.get(normalizeCountry(reporter)) : null;
-  const flowMax = d3.max(flows, (d) => d.value) || 0;
-  const strokeScale = d3.scaleSqrt().domain([0, flowMax || 1]).range([0.8, 4.6]);
+  const showArrows = flow === "ALL";
+  if (showArrows) {
+    const reporterPoint = reporter ? centroids.get(normalizeCountry(reporter)) : null;
+    const flowMax = d3.max(flows, (d) => d.value) || 0;
+    const strokeScale = d3.scaleSqrt().domain([0, flowMax || 1]).range([0.8, 4.6]);
 
-  const flowLines = flows
-    .map((flow) => {
-      const source = centroids.get(flow.source);
-      const target = centroids.get(flow.target);
-      if (!source || !target || !reporterPoint) return null;
-      return { ...flow, sourcePoint: source, targetPoint: target };
-    })
-    .filter(Boolean);
+    const flowLines = flows
+      .map((flowLine) => {
+        const source = centroids.get(flowLine.source);
+        const target = centroids.get(flowLine.target);
+        if (!source || !target || !reporterPoint) return null;
+        return { ...flowLine, sourcePoint: source, targetPoint: target };
+      })
+      .filter(Boolean);
 
-  mapLayer
-    .append("g")
-    .attr("class", "flow-lines")
-    .selectAll("path")
-    .data(flowLines)
-    .enter()
-    .append("path")
-    .attr("d", (d) => {
-      const [x1, y1] = d.sourcePoint;
-      const [x2, y2] = d.targetPoint;
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const length = Math.hypot(dx, dy) || 1;
-      const offset = d.flow === "IMPORT" ? -12 : 12;
-      const nx = (-dy / length) * offset;
-      const ny = (dx / length) * offset;
-      const mx = (x1 + x2) / 2 + nx;
-      const my = (y1 + y2) / 2 + ny;
-      return `M${x1},${y1} Q${mx},${my} ${x2},${y2}`;
-    })
-    .attr("fill", "none")
-    .attr("stroke", "#1f1a16")
-    .attr("stroke-opacity", 0.5)
-    .attr("stroke-width", (d) => strokeScale(d.value))
-    .attr("marker-end", `url(#${arrowId})`)
-    .style("pointer-events", "stroke")
-    .on("mousemove", (event, d) => {
-      const direction = d.flow === "IMPORT" ? `Import from ${d.partner}` : `Export to ${d.partner}`;
-      tooltipEl
-        .style("opacity", 1)
-        .style("left", `${event.clientX + 12}px`)
-        .style("top", `${event.clientY + 12}px`)
-        .text(`${direction}: ${formatValue(d.value)}`);
-    })
-    .on("mouseleave", () => tooltipEl.style("opacity", 0));
+    mapLayer
+      .append("g")
+      .attr("class", "flow-lines")
+      .selectAll("path")
+      .data(flowLines)
+      .enter()
+      .append("path")
+      .attr("d", (d) => {
+        const [x1, y1] = d.sourcePoint;
+        const [x2, y2] = d.targetPoint;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.hypot(dx, dy) || 1;
+        const offset = d.flow === "IMPORT" ? -8 : 8;
+        const nx = (-dy / length) * offset;
+        const ny = (dx / length) * offset;
+        const mx = (x1 + x2) / 2 + nx;
+        const my = (y1 + y2) / 2 + ny;
+        return `M${x1},${y1} Q${mx},${my} ${x2},${y2}`;
+      })
+      .attr("fill", "none")
+      .attr("stroke", "#1f1a16")
+      .attr("stroke-opacity", 0.4)
+      .attr("stroke-width", (d) => Math.max(0.8, strokeScale(d.value) * 0.75))
+      .attr("marker-end", `url(#${arrowId})`)
+      .style("pointer-events", "stroke")
+      .on("mousemove", (event, d) => {
+        const direction = d.flow === "IMPORT" ? `Import from ${d.partner}` : `Export to ${d.partner}`;
+        tooltipEl
+          .style("opacity", 1)
+          .style("left", `${event.clientX + 12}px`)
+          .style("top", `${event.clientY + 12}px`)
+          .text(`${direction}: ${formatValue(d.value)}`);
+      })
+      .on("mouseleave", () => tooltipEl.style("opacity", 0));
+  }
 
   charts.mapLegend.html("");
-  charts.mapLegend
-    .append("span")
-    .html(`<i style="background:${color(maxValue)}"></i> High`);
-  charts.mapLegend
-    .append("span")
-    .html(`<i style="background:${color(maxValue * 0.3)}"></i> Low`);
-  charts.mapLegend
-    .append("span")
-    .text("Arrows show import/export direction");
+  if (flow === "IMPORT" || flow === "EXPORT") {
+    const isImport = flow === "IMPORT";
+    const scale = isImport ? importColor : exportColor;
+    const legendTitle = isImport ? "Import intensity" : "Export intensity";
+    const maxValue = isImport ? maxImport : maxExport;
+
+    const block = charts.mapLegend.append("div").attr("class", "legend-block");
+    block.append("span").attr("class", "legend-title").text(legendTitle);
+    block
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${scale(0)}, ${scale(maxValue * 0.5)}, ${scale(maxValue || 1)})`);
+  } else {
+    const importBlock = charts.mapLegend.append("div").attr("class", "legend-block");
+    importBlock.append("span").attr("class", "legend-title").text("Import intensity");
+    importBlock
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${importColor(0)}, ${importColor(maxImport * 0.5)}, ${importColor(maxImport || 1)})`);
+
+    const exportBlock = charts.mapLegend.append("div").attr("class", "legend-block");
+    exportBlock.append("span").attr("class", "legend-title").text("Export intensity");
+    exportBlock
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${exportColor(0)}, ${exportColor(maxExport * 0.5)}, ${exportColor(maxExport || 1)})`);
+
+    charts.mapLegend
+      .append("span")
+      .attr("class", "legend-swatch")
+      .text("Import & Export");
+
+  }
 };
 
 const renderProductView = (data) => {
   const productData = data.filter((d) => d.product === state.product);
   const yearData = productData.filter((d) => d.year === state.year);
 
-  const regionTotals = d3.rollups(
-    yearData,
+  const euTotals = d3.rollups(
+    yearData.filter((d) => regionForCountry(d.partner) === "EU"),
     (v) => d3.sum(v, (d) => d.value),
-    (d) => regionForCountry(d.partner)
+    (d) => d.partner
   )
     .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => d3.descending(a.value, b.value));
-
-  drawPie(
-    charts.regionPie,
-    regionTotals,
-    ["#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a"],
-    (label) => {
-      state.regionFocus = label === "EU" ? "EU" : "";
-      render();
-    }
-  );
-
-  const euTotals = state.regionFocus
-    ? d3.rollups(
-        yearData.filter((d) => regionForCountry(d.partner) === "EU"),
-        (v) => d3.sum(v, (d) => d.value),
-        (d) => d.partner
-      )
-        .map(([label, value]) => ({ label, value }))
-        .sort((a, b) => d3.descending(a.value, b.value))
-        .slice(0, 8)
-    : [];
+    .sort((a, b) => d3.descending(a.value, b.value))
+    .slice(0, 8);
 
   drawPie(charts.euPie, euTotals, ["#3f6b3f", "#8bbd8b", "#d0e4d0", "#f1e7db"]);
-
-  const monthly = d3.rollups(
-    productData,
-    (v) => {
-      const total = d3.sum(v, (d) => d.value);
-      const america = d3.sum(v.filter((d) => regionForCountry(d.partner) === "America"), (d) => d.value);
-      const asia = d3.sum(v.filter((d) => regionForCountry(d.partner) === "Asia"), (d) => d.value);
-      const eu = d3.sum(v.filter((d) => regionForCountry(d.partner) === "EU"), (d) => d.value);
-      return { total, america, asia, eu };
-    },
-    (d) => d.date
-  )
-    .map(([date, values]) => ({ date, ...values }))
-    .sort((a, b) => d3.ascending(a.date, b.date));
-
-  const series = [
-    { name: "Total", values: monthly.map((d) => ({ date: d.date, value: d.total })) },
-    { name: "America", values: monthly.map((d) => ({ date: d.date, value: d.america })) },
-    { name: "EU", values: monthly.map((d) => ({ date: d.date, value: d.eu })) },
-    { name: "Asia", values: monthly.map((d) => ({ date: d.date, value: d.asia })) },
-  ];
-
-  drawLine(charts.productLine, series, ["#1f1a16", "#e36414", "#3f6b3f", "#0f4c5c"]);
 };
 
 const renderMapView = (filteredData, fullData, europeFeatures) => {
@@ -654,11 +731,16 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
     (d) => d.partner
   );
 
+  const importValues = {};
+  const exportValues = {};
+
   const flows = [];
   flowTotals.forEach(([flow, partners]) => {
     partners.forEach(([partner, value]) => {
       const normalizedPartner = normalizeCountry(partner);
       if (!isEurope(normalizedPartner)) return;
+      if (flow === "IMPORT") importValues[normalizedPartner] = value;
+      if (flow === "EXPORT") exportValues[normalizedPartner] = value;
       const source = flow === "EXPORT" ? state.reporter : normalizedPartner;
       const target = flow === "EXPORT" ? normalizedPartner : state.reporter;
       if (!source || !target) return;
@@ -672,37 +754,64 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
     });
   });
 
-  drawMap(charts.map, europeFeatures, values, flows, state.reporter);
+  drawMap(charts.map, europeFeatures, values, flows, state.reporter, state.flow, importValues, exportValues);
 };
 
 const renderCountryDetail = (data) => {
+  const hasSelectedData = state.selectedCountry
+    ? data.some((d) => d.partner === state.selectedCountry)
+    : false;
+
+  if (!hasSelectedData) {
+    const yearData = data.filter((d) => d.year === state.year);
+    const topPartner = d3
+      .rollups(
+        yearData,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => d.partner
+      )
+      .sort((a, b) => d3.descending(a[1], b[1]))[0];
+    state.selectedCountry = topPartner ? topPartner[0] : "";
+  }
+
   if (!state.selectedCountry) {
-    charts.countryPie.selectAll("*").remove();
     charts.countryLine.selectAll("*").remove();
+    charts.countryLineLegend.selectAll("*").remove();
     return;
   }
 
   const countryData = data.filter((d) => d.partner === state.selectedCountry);
-  const yearData = countryData.filter((d) => d.year === state.year);
+  if (charts.countryPie.node()) {
+    const yearData = countryData.filter((d) => d.year === state.year);
 
-  const productTotals = d3.rollups(
-    yearData,
-    (v) => d3.sum(v, (d) => d.value),
-    (d) => d.product
-  )
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => d3.descending(a.value, b.value));
+    const productTotals = d3.rollups(
+      yearData,
+      (v) => d3.sum(v, (d) => d.value),
+      (d) => d.product
+    )
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => d3.descending(a.value, b.value));
 
-  const topProducts = productTotals.slice(0, 6);
-  const otherValue = d3.sum(productTotals.slice(6), (d) => d.value);
-  if (otherValue) topProducts.push({ label: "Other", value: otherValue });
+    const shortTotals = d3
+      .rollups(
+        productTotals,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => shortenProductLabel(d.label)
+      )
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => d3.descending(a.value, b.value));
 
-  drawPie(charts.countryPie, topProducts, ["#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a", "#7e6f65", "#c7b7a3"]);
+    const topProducts = shortTotals.slice(0, 6);
+    const otherValue = d3.sum(shortTotals.slice(6), (d) => d.value);
+    if (otherValue) topProducts.push({ label: "Other", value: otherValue });
+
+    drawPie(charts.countryPie, topProducts, ["#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a", "#7e6f65", "#c7b7a3"]);
+  }
 
   const totalByDate = d3.rollups(
     data,
     (v) => d3.sum(v, (d) => d.value),
-    (d) => d.date
+    (d) => formatMonth(d.date)
   );
   const totalMap = new Map(totalByDate);
 
@@ -715,18 +824,19 @@ const renderCountryDetail = (data) => {
       const yaourt = d3.sum(v.filter((d) => productCategory(d.product) === "Yaourt"), (d) => d.value);
       return { total, lait, fromage, yaourt };
     },
-    (d) => d.date
+    (d) => formatMonth(d.date)
   )
-    .map(([date, values]) => {
-      const all = totalMap.get(date) || 0;
+    .map(([dateKey, values]) => {
+      const all = totalMap.get(dateKey) || 0;
       return {
-        date,
+        date: parseMonth(dateKey),
         total: all ? (values.total / all) * 100 : 0,
         lait: all ? (values.lait / all) * 100 : 0,
         fromage: all ? (values.fromage / all) * 100 : 0,
         yaourt: all ? (values.yaourt / all) * 100 : 0,
       };
     })
+    .filter((d) => d.date)
     .sort((a, b) => d3.ascending(a.date, b.date));
 
   const series = [
@@ -737,6 +847,7 @@ const renderCountryDetail = (data) => {
   ];
 
   drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
+  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
 };
 
 let cachedData = [];

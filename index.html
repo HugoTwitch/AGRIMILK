@@ -18,64 +18,52 @@
         <h1>AGRIMILK</h1>
         <p>Interactive view of French dairy trade flows</p>
       </div>
-      <div class="filters" id="filters"></div>
+      <div class="topbar-right">
+        <div class="filters" id="filters"></div>
+        <div class="product-dropdown">
+          <button class="btn-products" id="btnProducts">Products ▼</button>
+          <div class="product-dropdown-content" id="productDropdown">
+            <input id="productSearch" type="search" placeholder="Search products" />
+            <div class="product-list" id="productList"></div>
+          </div>
+        </div>
+      </div>
     </header>
 
     <main class="layout">
-      <section class="panel sidebar">
-        <div class="panel-head">
-          <h2>Products</h2>
-          <input id="productSearch" type="search" placeholder="Search products" />
-        </div>
-        <div class="product-list" id="productList"></div>
-      </section>
+      <div class="map-product-container">
+        <section class="panel map">
+          <div class="panel-head">
+            <h2>Europe map</h2>
+            <div class="pill" id="mapLabel">Loading...</div>
+          </div>
+          <div class="chart" id="map"></div>
+          <div class="legend" id="mapLegend"></div>
+        </section>
 
-      <section class="panel product">
-        <div class="panel-head">
-          <h2>Product focus</h2>
-          <div class="pill" id="productLabel">Loading...</div>
-        </div>
-        <div class="split">
-          <div>
-            <h3>Region split</h3>
-            <div class="chart" id="regionPie"></div>
-            <p class="note" id="regionNote">Click EU slice to drill down.</p>
+        <section class="panel product">
+          <div class="panel-head">
+            <h2>Product focus</h2>
+            <div class="pill" id="productLabel">Loading...</div>
           </div>
           <div>
             <h3>EU drill-down</h3>
             <div class="chart" id="euPie"></div>
-            <p class="note" id="euNote">EU breakdown appears after selecting EU.</p>
+            <p class="note" id="euNote">Top 8 EU partners breakdown.</p>
           </div>
-        </div>
-        <div>
-          <h3>Monthly evolution</h3>
-          <div class="chart" id="productLine"></div>
-        </div>
-      </section>
-
-      <section class="panel map">
-        <div class="panel-head">
-          <h2>Europe map</h2>
-          <div class="pill" id="mapLabel">Loading...</div>
-        </div>
-        <div class="chart" id="map"></div>
-        <div class="legend" id="mapLegend"></div>
-      </section>
-
-      <section class="panel detail">
-        <div class="panel-head">
-          <h2>Country details</h2>
-          <div class="pill" id="countryLabel">Select a country</div>
-        </div>
-        <div>
-          <h3>Product mix</h3>
-          <div class="chart" id="countryPie"></div>
-        </div>
-        <div>
-          <h3>Share over time</h3>
-          <div class="chart" id="countryLine"></div>
-        </div>
-      </section>
+          <div class="country-section">
+            <div class="panel-head">
+              <h3>Country details</h3>
+              <div class="pill" id="countryLabel">Select a country</div>
+            </div>
+            <div>
+              <h4>Share over time</h4>
+              <div class="chart chart-small" id="countryLine"></div>
+              <div class="line-legend" id="countryLineLegend"></div>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
 
     <div class="tooltip" id="tooltip"></div>
