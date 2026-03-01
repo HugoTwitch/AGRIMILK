@@ -62,9 +62,9 @@ const EU_COUNTRIES = new Set([
 const EUROPE_EXTRA = new Set([
   "Albania",
   "Andorra",
-  "Armenia",
-  "Azerbaijan",
-  "Belarus",
+  //"Armenia",
+  //"Azerbaijan",
+  //"Belarus",
   "Bosnia and Herzegovina",
   "Iceland",
   "Kosovo",
@@ -428,9 +428,12 @@ const drawPie = (container, data, colors, onSliceClick) => {
   const pie = d3.pie().value((d) => d.value);
   const arc = d3.arc().innerRadius(radius * 0.3).outerRadius(radius);
 
+  // On calcule une bonne fois les arcs
+  const pieData = pie(data);
+
   const arcs = group
     .selectAll("path")
-    .data(pie(data))
+    .data(pieData)
     .enter()
     .append("path")
     .attr("d", arc)
@@ -443,9 +446,12 @@ const drawPie = (container, data, colors, onSliceClick) => {
     arcs.on("click", (event, d) => onSliceClick(d.data.label));
   }
 
+  // Seuil d’angle : on n’affiche le texte que pour les parts assez grandes
+  const LABEL_ANGLE_THRESHOLD = 0.35; // ~20 degrés
+
   group
     .selectAll("text")
-    .data(pie(data))
+    .data(pieData.filter((d) => d.endAngle - d.startAngle > LABEL_ANGLE_THRESHOLD))
     .enter()
     .append("text")
     .attr("transform", (d) => `translate(${arc.centroid(d)})`)
@@ -455,6 +461,7 @@ const drawPie = (container, data, colors, onSliceClick) => {
     .attr("fill", "#1f1a16")
     .text((d) => (d.data.value ? d.data.label : ""));
 };
+
 
 const drawLine = (container, series, colors) => {
   const width = container.node().clientWidth;
@@ -565,49 +572,56 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
   const mapLayer = svg.append("g").attr("clip-path", `url(#${clipId})`);
 
   mapLayer
-    .selectAll("path")
-    .data(features)
-    .enter()
-    .append("path")
-    .attr("class", "country")
-    .classed("selected", (d) => normalizeCountry(d.properties.name) === state.selectedCountry)
-    .attr("d", path)
-    .attr("fill", (d) => {
-      const name = normalizeCountry(d.properties.name);
-      if (state.selectedCountry && name === state.selectedCountry) return "#cfe3ff";
+  .selectAll("path")
+  .data(features)
+  .enter()
+  .append("path")
+  .attr("class", "country")
+  .classed("selected", (d) => normalizeCountry(d.properties.name) === state.selectedCountry)
+  .attr("d", path)
+  // départ en blanc
+  .attr("fill", "#ffffff")
+  // transition vers la vraie couleur
+  .transition()
+  .duration(400)
+  .attr("fill", (d) => {
+    const name = normalizeCountry(d.properties.name);
+    if (state.selectedCountry && name === state.selectedCountry) return "#cfe3ff";
 
-      const importValue = importValues[name] || 0;
-      const exportValue = exportValues[name] || 0;
+    const importValue = importValues[name] || 0;
+    const exportValue = exportValues[name] || 0;
 
-      if (flow === "IMPORT") return importValue > 0 ? importColor(importValue) : "#d8d3cb";
-      if (flow === "EXPORT") return exportValue > 0 ? exportColor(exportValue) : "#d8d3cb";
-      if (importValue > 0 && exportValue > 0) return "#f6e7a5";
-      if (importValue > 0) return importColor(importValue);
-      if (exportValue > 0) return exportColor(exportValue);
-      return "#d8d3cb";
-    })
-    .style("cursor", "pointer")
-    .on("mousemove", (event, d) => {
-      const name = normalizeCountry(d.properties.name);
-      const value = values[name] || 0;
-      tooltipEl
-        .style("opacity", 1)
-        .style("left", `${event.clientX + 12}px`)
-        .style("top", `${event.clientY + 12}px`)
-        .text(`${name}: ${formatValue(value)}`);
-    })
-    .on("mouseleave", () => tooltipEl.style("opacity", 0))
-    .on("click", (event, d) => {
-      const clickedCountry = normalizeCountry(d.properties.name);
-      state.selectedCountry = clickedCountry;
-      if (reporterSet.has(clickedCountry)) {
-        state.reporter = clickedCountry;
-        if (reporterSelectRef) {
-          updateSelectValue(reporterSelectRef, state.reporter);
-        }
+    if (flow === "IMPORT") return importValue > 0 ? importColor(importValue) : "#d8d3cb";
+    if (flow === "EXPORT") return exportValue > 0 ? exportColor(exportValue) : "#d8d3cb";
+    if (importValue > 0 && exportValue > 0) return "#f6e7a5";
+    if (importValue > 0) return importColor(importValue);
+    if (exportValue > 0) return exportColor(exportValue);
+    return "#d8d3cb";
+  })
+  .selection() // retour à la sélection pour les events
+  .style("cursor", "pointer")
+  .on("mousemove", (event, d) => {
+    const name = normalizeCountry(d.properties.name);
+    const value = values[name] || 0;
+    tooltipEl
+      .style("opacity", 1)
+      .style("left", `${event.clientX + 12}px`)
+      .style("top", `${event.clientY + 12}px`)
+      .text(`${name}: ${formatValue(value)}`);
+  })
+  .on("mouseleave", () => tooltipEl.style("opacity", 0))
+  .on("click", (event, d) => {
+    const clickedCountry = normalizeCountry(d.properties.name);
+    state.selectedCountry = clickedCountry;
+    if (reporterSet.has(clickedCountry)) {
+      state.reporter = clickedCountry;
+      if (reporterSelectRef) {
+        updateSelectValue(reporterSelectRef, state.reporter);
       }
-      render();
-    });
+    }
+    render();
+  });
+
 
   const showArrows = flow === "ALL";
   if (showArrows) {
@@ -701,17 +715,71 @@ const renderProductView = (data) => {
   const productData = data.filter((d) => d.product === state.product);
   const yearData = productData.filter((d) => d.year === state.year);
 
-  const euTotals = d3.rollups(
-    yearData.filter((d) => regionForCountry(d.partner) === "EU"),
-    (v) => d3.sum(v, (d) => d.value),
-    (d) => d.partner
-  )
+  const euTotals = d3
+    .rollups(
+      yearData.filter((d) => regionForCountry(d.partner) === "EU"),
+      (v) => d3.sum(v, (d) => d.value),
+      (d) => d.partner
+    )
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => d3.descending(a.value, b.value))
     .slice(0, 8);
 
-  drawPie(charts.euPie, euTotals, ["#3f6b3f", "#8bbd8b", "#d0e4d0", "#f1e7db"]);
+  // 1) Pie chart comme avant
+  drawPie(
+    charts.euPie,
+    euTotals,
+    ["#3f6b3f", "#8bbd8b", "#d0e4d0", "#f1e7db"]
+  );
+
+  // 2) Liste classée à droite
+  const euListEl = d3.select("#euList");
+  euListEl.selectAll("*").remove();
+
+  if (!euTotals.length) {
+    euListEl
+      .append("div")
+      .attr("class", "note")
+      .text("No EU data for this selection.");
+  } else {
+    const items = euListEl
+      .selectAll("div.eu-list-item")
+      .data(euTotals)
+      .enter()
+      .append("div")
+      .attr("class", "eu-list-item");
+
+    items
+      .append("span")
+      .attr("class", "eu-list-rank")
+      .text((d, i) => `${i + 1}.`);
+
+    items
+      .append("span")
+      .attr("class", "eu-list-label")
+      .text((d) => d.label);
+
+    items
+      .append("span")
+      .attr("class", "eu-list-value")
+      .text((d) => formatNumber(d.value));
+    
+  }
+
+  // 3) Mettre à jour la note sous le graphe
+  const euNoteEl = d3.select("#euNote");
+  if (!euNoteEl.empty()) {
+    if (euTotals.length) {
+      const totalEU = d3.sum(euTotals, (d) => d.value || 0);
+      euNoteEl.text(
+        `Top 8 EU partners breakdown · Total: ${formatNumber(totalEU)}`
+      );
+    } else {
+      euNoteEl.text("No EU data for this selection.");
+    }
+  }
 };
+
 
 const renderMapView = (filteredData, fullData, europeFeatures) => {
   const filtered = filterByDate(filteredData).filter((d) => d.product === state.product);
