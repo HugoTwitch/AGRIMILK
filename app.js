@@ -1,4 +1,4 @@
-const DATA_PATH = "data/ds-059341__custom_20028720_linear.csv";
+const DATA_PATH = "./data/ds-059341__custom_20028720_linear.csv";
 const MAP_PATH = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 const state = {
@@ -12,7 +12,7 @@ const state = {
 };
 
 const MAP_ZOOM = 1.4;
-const MAP_CENTER_OFFSET = [-100, 460];
+const MAP_CENTER_OFFSET = [-100, 580];
 
 const MONTHS = [
   "January",
