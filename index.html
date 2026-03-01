@@ -16,7 +16,7 @@
     <header class="topbar">
       <div class="title">
         <h1>AGRIMILK</h1>
-        <p>Interactive view of French dairy trade flows</p>
+        <p>Interactive view of European dairy trade flows</p>
       </div>
       <div class="topbar-right">
         <div class="filters" id="filters"></div>
@@ -46,11 +46,18 @@
             <h2>Product focus</h2>
             <div class="pill" id="productLabel">Loading...</div>
           </div>
-          <div>
-            <h3>EU drill-down</h3>
-            <div class="chart" id="euPie"></div>
-            <p class="note" id="euNote">Top 8 EU partners breakdown.</p>
-          </div>
+         <div>
+  <h3>EU drill-down</h3>
+
+  <!-- Nouveau: ligne avec pie + liste -->
+  <div class="eu-row">
+    <div class="chart" id="euPie"></div>
+    <div class="eu-list" id="euList"></div>
+  </div>
+
+  <p class="note" id="euNote">Top 8 EU partners breakdown.</p>
+</div>
+
           <div class="country-section">
             <div class="panel-head">
               <h3>Country details</h3>
