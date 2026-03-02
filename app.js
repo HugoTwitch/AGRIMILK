@@ -11,8 +11,8 @@ const state = {
   selectedCountry: "",
 };
 
-const MAP_ZOOM = 1;
-const MAP_CENTER_OFFSET = [-100, 480];
+const MAP_ZOOM = 1.4;
+const MAP_CENTER_OFFSET = [-100, 600];
 
 const MONTHS = [
   "January",
