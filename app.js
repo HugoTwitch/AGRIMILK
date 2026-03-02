@@ -160,6 +160,8 @@ const COUNTRY_ALIASES = new Map([
   ["Ireland (Eire)", "Ireland"],
   ["United Kingdom (Northern Ireland)", "United Kingdom"],
   ["Belarus (Belorussia)", "Belarus"],
+  ["Bosnia and Herz.", "Bosnia and Herzegovina"],
+  ["Macedonia", "North Macedonia"],
 ]);
 
 const KNOWN_COUNTRIES = new Set([
