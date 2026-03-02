@@ -624,14 +624,22 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
     })
   ) || 0;
 
-  const importColor = d3.scaleSequential().domain([0, maxImport || 1]).interpolator(d3.interpolateYlGn);
-  const exportColor = d3.scaleSequential().domain([0, maxExport || 1]).interpolator(d3.interpolateYlOrRd);
+  const importColor = d3.scaleSequential().domain([0, maxImport || 1]).interpolator(d3.interpolateGreens);
+  const exportColor = d3.scaleSequential().domain([0, maxExport || 1]).interpolator(d3.interpolateReds);
   const bothColor = d3.scaleSequential().domain([0, maxBoth || 1]).interpolator(d3.interpolatePurples);
 
   const centroids = new Map(
     features.map((feature) => {
       const name = normalizeCountry(feature.properties.name);
-      return [name, path.centroid(feature)];
+      const defaultCentroid = path.centroid(feature);
+      
+      // Manual adjustment for Norway to point to Oslo/central Norway area
+      if (name === "Norway") {
+        // Move significantly down (south) and slightly left to hit mainland Norway
+        return [name, [defaultCentroid[0] - 70, defaultCentroid[1] + 270]];
+      }
+      
+      return [name, defaultCentroid];
     })
   );
 
@@ -760,7 +768,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
   if (flow === "IMPORT" || flow === "EXPORT") {
     const isImport = flow === "IMPORT";
     const scale = isImport ? importColor : exportColor;
-    const legendTitle = isImport ? "Import intensity" : "Export intensity";
+    const legendTitle = isImport ? "Import" : "Export";
     const maxValue = isImport ? maxImport : maxExport;
 
     const block = charts.mapLegend.append("div").attr("class", "legend-block");
@@ -771,14 +779,14 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
       .style("background", `linear-gradient(90deg, ${scale(0)}, ${scale(maxValue * 0.5)}, ${scale(maxValue || 1)})`);
   } else {
     const importBlock = charts.mapLegend.append("div").attr("class", "legend-block");
-    importBlock.append("span").attr("class", "legend-title").text("Import intensity");
+    importBlock.append("span").attr("class", "legend-title").text("Import");
     importBlock
       .append("span")
       .attr("class", "legend-bar")
       .style("background", `linear-gradient(90deg, ${importColor(0)}, ${importColor(maxImport * 0.5)}, ${importColor(maxImport || 1)})`);
 
     const exportBlock = charts.mapLegend.append("div").attr("class", "legend-block");
-    exportBlock.append("span").attr("class", "legend-title").text("Export intensity");
+    exportBlock.append("span").attr("class", "legend-title").text("Export");
     exportBlock
       .append("span")
       .attr("class", "legend-bar")
