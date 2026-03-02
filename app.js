@@ -9,6 +9,8 @@ const state = {
   product: "",
   productQuery: "",
   selectedCountry: "",
+  sliderYear: "",
+  sliderMonth: "",
 };
 
 const MAP_ZOOM = 1.4;
@@ -182,6 +184,9 @@ const productDropdownEl = d3.select("#productDropdown");
 
 let reporterSelectRef = null;
 let reporterSet = new Set();
+let allDates = []; // Array of { year, month } objects sorted by date
+const dateSliderEl = d3.select("#dateSlider");
+const dateSliderLabelEl = d3.select("#dateSliderLabel");
 
 // Toggle product dropdown
 btnProductsEl.on("click", (event) => {
@@ -356,6 +361,7 @@ const buildFilters = (data) => {
     years.map((d) => ({ label: d, value: d })),
     (value) => {
       state.year = value;
+      updateSliderFromFilters();
       render(data);
     }
   );
@@ -365,6 +371,7 @@ const buildFilters = (data) => {
   );
   const monthSelect = createSelect("Month", monthOptions, (value) => {
     state.month = value;
+    updateSliderFromFilters();
     render(data);
   });
 
@@ -406,6 +413,14 @@ const filterByDate = (data) => {
   return data.filter((d) => {
     if (state.year && d.year !== state.year) return false;
     if (state.month && d.month !== state.month) return false;
+    return true;
+  });
+};
+
+const filterByDateWithSlider = (data) => {
+  return data.filter((d) => {
+    if (state.sliderYear && d.year !== state.sliderYear) return false;
+    if (state.sliderMonth && d.month !== state.sliderMonth) return false;
     return true;
   });
 };
@@ -481,6 +496,7 @@ const drawLine = (container, series, colors) => {
 
   plot.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(6));
   plot.append("g").call(d3.axisLeft(y).ticks(5));
+  plot.append("text").attr("transform", "rotate(-90)").attr("y", 0 - margin.left).attr("x", 0 - (innerHeight / 2)).attr("dy", "0.71em").attr("text-anchor", "middle").attr("font-size", "12px").attr("fill", "#6b5f57").text("%");
 
   const color = d3.scaleOrdinal().domain(series.map((d) => d.name)).range(colors);
   const line = d3.line().x((d) => x(d.date)).y((d) => y(d.value));
@@ -495,6 +511,85 @@ const drawLine = (container, series, colors) => {
     .attr("stroke", (d) => color(d.name))
     .attr("stroke-width", 2)
     .attr("d", (d) => line(d.values));
+
+  // Scrubber interaction - vertical line and data points
+  const scrubberLine = plot.append("line")
+    .attr("class", "scrubber-line")
+    .attr("stroke", "#999")
+    .attr("stroke-width", 2)
+    .attr("y1", 0)
+    .attr("y2", innerHeight)
+    .style("opacity", 0)
+    .style("pointer-events", "none");
+
+  const scrubberTooltip = d3.select("body").append("div")
+    .style("position", "absolute")
+    .style("background", "rgba(31, 26, 22, 0.95)")
+    .style("color", "#fff")
+    .style("padding", "8px 12px")
+    .style("border-radius", "4px")
+    .style("font-size", "12px")
+    .style("pointer-events", "none")
+    .style("z-index", "1000")
+    .style("opacity", 0)
+    .style("white-space", "pre");
+
+  const dotsGroup = plot.append("g").attr("class", "scrubber-dots");
+
+  const interactiveRect = plot.append("rect")
+    .attr("width", innerWidth)
+    .attr("height", innerHeight)
+    .attr("fill", "transparent")
+    .style("cursor", "crosshair");
+
+  interactiveRect.on("mousemove", function(event) {
+    const xPos = d3.pointer(event)[0];
+    const date = x.invert(xPos);
+
+    scrubberLine.attr("x1", xPos).attr("x2", xPos).style("opacity", 0.6);
+    dotsGroup.selectAll("circle").remove();
+
+    let tooltipText = d3.timeFormat("%b %Y")(date) + "\n";
+    let hasData = false;
+
+    series.forEach((s) => {
+      const bisect = d3.bisector((d) => d.date).left;
+      const idx = bisect(s.values, date);
+
+      if (idx > 0 && idx < s.values.length) {
+        const d0 = s.values[idx - 1];
+        const d1 = s.values[idx];
+        const d = date - d0.date > d1.date - date ? d1 : d0;
+
+        const xCoord = x(d.date);
+        const yCoord = y(d.value);
+
+        dotsGroup.append("circle")
+          .attr("cx", xCoord)
+          .attr("cy", yCoord)
+          .attr("r", 5)
+          .attr("fill", color(s.name))
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 2);
+
+        tooltipText += `${s.name}: ${d.value.toFixed(1)}%\n`;
+        hasData = true;
+      }
+    });
+
+    if (hasData) {
+      scrubberTooltip
+        .style("opacity", 1)
+        .style("left", (event.clientX + 10) + "px")
+        .style("top", (event.clientY + 10) + "px")
+        .html(tooltipText.split("\n").join("<br>"));
+    }
+  })
+  .on("mouseleave", function() {
+    scrubberLine.style("opacity", 0);
+    dotsGroup.selectAll("circle").remove();
+    scrubberTooltip.style("opacity", 0);
+  });
 };
 
 const drawLineLegend = (container, series, colors) => {
@@ -594,7 +689,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
         .style("opacity", 1)
         .style("left", `${event.clientX + 12}px`)
         .style("top", `${event.clientY + 12}px`)
-        .text(`${name}: ${formatValue(value)}`);
+        .text(`${name}: ${formatValue(value)} L`);
     })
     .on("mouseleave", () => tooltipEl.style("opacity", 0))
     .on("click", (event, d) => {
@@ -656,7 +751,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
           .style("opacity", 1)
           .style("left", `${event.clientX + 12}px`)
           .style("top", `${event.clientY + 12}px`)
-          .text(`${direction}: ${formatValue(d.value)}`);
+          .text(`${direction}: ${formatValue(d.value)} L`);
       })
       .on("mouseleave", () => tooltipEl.style("opacity", 0));
   }
@@ -714,7 +809,7 @@ const renderProductView = (data) => {
 };
 
 const renderMapView = (filteredData, fullData, europeFeatures) => {
-  const filtered = filterByDate(filteredData).filter((d) => d.product === state.product);
+  const filtered = filterByDateWithSlider(filteredData).filter((d) => d.product === state.product);
   const totals = d3.rollups(
     filtered,
     (v) => d3.sum(v, (d) => d.value),
@@ -723,7 +818,7 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
   const values = Object.fromEntries(totals);
 
   const flowBase = fullData.filter((d) => (state.reporter ? d.reporter === state.reporter : true));
-  const flowFiltered = filterByDate(flowBase).filter((d) => d.product === state.product);
+  const flowFiltered = filterByDateWithSlider(flowBase).filter((d) => d.product === state.product);
   const flowTotals = d3.rollups(
     flowFiltered,
     (v) => d3.sum(v, (d) => d.value),
@@ -820,9 +915,8 @@ const renderCountryDetail = (data) => {
     (v) => {
       const total = d3.sum(v, (d) => d.value);
       const lait = d3.sum(v.filter((d) => productCategory(d.product) === "Lait"), (d) => d.value);
-      const fromage = d3.sum(v.filter((d) => productCategory(d.product) === "Fromage"), (d) => d.value);
       const yaourt = d3.sum(v.filter((d) => productCategory(d.product) === "Yaourt"), (d) => d.value);
-      return { total, lait, fromage, yaourt };
+      return { total, lait, yaourt };
     },
     (d) => formatMonth(d.date)
   )
@@ -832,7 +926,6 @@ const renderCountryDetail = (data) => {
         date: parseMonth(dateKey),
         total: all ? (values.total / all) * 100 : 0,
         lait: all ? (values.lait / all) * 100 : 0,
-        fromage: all ? (values.fromage / all) * 100 : 0,
         yaourt: all ? (values.yaourt / all) * 100 : 0,
       };
     })
@@ -842,12 +935,11 @@ const renderCountryDetail = (data) => {
   const series = [
     { name: "Total", values: countryByDate.map((d) => ({ date: d.date, value: d.total })) },
     { name: "Lait", values: countryByDate.map((d) => ({ date: d.date, value: d.lait })) },
-    { name: "Fromage", values: countryByDate.map((d) => ({ date: d.date, value: d.fromage })) },
     { name: "Yaourt", values: countryByDate.map((d) => ({ date: d.date, value: d.yaourt })) },
   ];
 
-  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
-  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
+  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#3f6b3f"]);
+  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#3f6b3f"]);
 };
 
 let cachedData = [];
@@ -868,6 +960,33 @@ const onResize = () => {
   window.addEventListener("resize", () => render());
 };
 
+const updateSliderFromFilters = () => {
+  if (!state.year || allDates.length === 0) return;
+  
+  // Find the index in allDates that matches state.year and state.month
+  let targetMonth = state.month || "01"; // Default to January if no month specified
+  let foundIndex = allDates.findIndex((d) => d.year === state.year && d.month === targetMonth);
+  
+  // If exact match not found and we have a year, find the first month of that year
+  if (foundIndex === -1) {
+    foundIndex = allDates.findIndex((d) => d.year === state.year);
+  }
+  
+  if (foundIndex !== -1) {
+    state.sliderYear = allDates[foundIndex].year;
+    state.sliderMonth = allDates[foundIndex].month;
+    dateSliderEl.attr("max", allDates.length - 1).property("value", foundIndex);
+    updateDateSliderLabel();
+  }
+};
+
+const updateDateSliderLabel = () => {
+  if (state.sliderYear && state.sliderMonth) {
+    const monthName = MONTHS[Number(state.sliderMonth) - 1];
+    dateSliderLabelEl.text(`${monthName} ${state.sliderYear}`);
+  }
+};
+
 const init = (data, europeFeatures) => {
   cachedData = data;
   cachedEurope = europeFeatures;
@@ -881,6 +1000,30 @@ const init = (data, europeFeatures) => {
     state.productQuery = event.target.value.trim().toLowerCase();
     buildProductList(products, data);
   });
+
+  // Initialize timeline slider
+  const uniqueDates = Array.from(new Set(data.map((d) => `${d.year}-${d.month}`)))
+    .sort()
+    .map((dateStr) => {
+      const [year, month] = dateStr.split("-");
+      return { year, month };
+    });
+  allDates = uniqueDates;
+
+  if (allDates.length > 0) {
+    // Sync slider with filter selections
+    updateSliderFromFilters();
+
+    dateSliderEl.on("input", (event) => {
+      const index = Number(event.target.value);
+      if (index >= 0 && index < allDates.length) {
+        state.sliderYear = allDates[index].year;
+        state.sliderMonth = allDates[index].month;
+        updateDateSliderLabel();
+        render();
+      }
+    });
+  }
 
   render();
   onResize();
