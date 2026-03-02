@@ -1,4 +1,4 @@
-const DATA_PATH = "./data/ds-059341__custom_20321495_monthly_linear.csv";
+const DATA_PATH = "./data/ds-059341__custom_20322076_monthly_linear.csv";
 const MAP_PATH = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 const state = {
