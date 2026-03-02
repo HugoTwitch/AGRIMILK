@@ -1,4 +1,4 @@
-const DATA_PATH = "./data/ds-059341__custom_20028720_linear.csv";
+const DATA_PATH = "./data/ds-059341__custom_20321495_monthly_linear.csv";
 const MAP_PATH = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 const state = {
@@ -64,18 +64,19 @@ const EU_COUNTRIES = new Set([
 const EUROPE_EXTRA = new Set([
   "Albania",
   "Andorra",
-  "Armenia",
-  "Azerbaijan",
   "Belarus",
   "Bosnia and Herzegovina",
+  "Georgia",
   "Iceland",
   "Kosovo",
+  "Liechtenstein",
   "Moldova",
   "Montenegro",
   "North Macedonia",
   "Norway",
   "Serbia",
   "Switzerland",
+  "Turkey",
   "Ukraine",
   "United Kingdom",
 ]);
@@ -107,15 +108,12 @@ const AMERICAS = new Set([
 
 const ASIA = new Set([
   "Afghanistan",
-  "Armenia",
-  "Azerbaijan",
   "Bahrain",
   "Bangladesh",
   "Bhutan",
   "Brunei",
   "Cambodia",
   "China",
-  "Georgia",
   "India",
   "Indonesia",
   "Iran",
@@ -145,7 +143,6 @@ const ASIA = new Set([
   "Syria",
   "Taiwan",
   "Thailand",
-  "Turkey",
   "United Arab Emirates",
   "Uzbekistan",
   "Vietnam",
@@ -157,7 +154,12 @@ const COUNTRY_ALIASES = new Map([
   ["Korea, Republic of", "South Korea"],
   ["Moldova, Republic of", "Moldova"],
   ["Turkiye", "Turkey"],
-  ["United Kingdom", "United Kingdom"],
+  ["Türkiye", "Turkey"],
+  ["Belgium (incl. Luxembourg 'LU' -> 1998)", "Belgium"],
+  ["Germany (incl. German Democratic Republic 'DD' from 1991)", "Germany"],
+  ["Ireland (Eire)", "Ireland"],
+  ["United Kingdom (Northern Ireland)", "United Kingdom"],
+  ["Belarus (Belorussia)", "Belarus"],
 ]);
 
 const KNOWN_COUNTRIES = new Set([
@@ -218,9 +220,12 @@ const normalizeCountry = (name) => {
   if (!name) return "";
   const trimmed = name.trim();
   const asciiName = stripDiacritics(trimmed);
+  
+  // Check direct aliases first
   if (COUNTRY_ALIASES.has(trimmed)) return COUNTRY_ALIASES.get(trimmed);
   if (COUNTRY_ALIASES.has(asciiName)) return COUNTRY_ALIASES.get(asciiName);
 
+  // Handle names with parentheses - extract base name
   const parenIndex = trimmed.indexOf(" (");
   if (parenIndex > 0) {
     const base = trimmed.slice(0, parenIndex);
@@ -277,11 +282,13 @@ const pruneFranceOverseas = (feature) => {
 
 const productCategory = (name) => {
   const lower = name.toLowerCase();
-  if (lower.includes("cheese")) return "Fromage";
-  if (lower.includes("yogurt") || lower.includes("yoghurt") || lower.includes("curdled")) {
-    return "Yaourt";
+  if (lower.includes("buttermilk")) return "Buttermilk";
+  if (lower.includes("concentrated") || lower.includes("evaporated") || lower.includes("condensed")) {
+    return "Milk concentrated";
   }
-  if (lower.includes("milk") || lower.includes("cream")) return "Lait";
+  if (lower.includes("milk") && !lower.includes("concentrated") && !lower.includes("buttermilk")) {
+    return "Milk not concentrated";
+  }
   return "Other";
 };
 
@@ -343,6 +350,7 @@ const buildFilters = (data) => {
     reporters.map((d) => ({ label: d, value: d })),
     (value) => {
       state.reporter = value;
+      state.selectedCountry = value; // Make the reporter country highlighted on the map
       render(data);
     }
   );
@@ -395,6 +403,7 @@ const buildProductList = (products, data) => {
     .text((d) => d)
     .on("click", (event, d) => {
       state.product = d;
+      state.selectedCountry = ""; // Reset selected country when product changes
       productDropdownEl.classed("open", false);
       render(data);
       buildProductList(products, data);
@@ -496,7 +505,7 @@ const drawLine = (container, series, colors) => {
 
   plot.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(6));
   plot.append("g").call(d3.axisLeft(y).ticks(5));
-  plot.append("text").attr("transform", "rotate(-90)").attr("y", 0 - margin.left).attr("x", 0 - (innerHeight / 2)).attr("dy", "0.71em").attr("text-anchor", "middle").attr("font-size", "12px").attr("fill", "#6b5f57").text("%");
+  plot.append("text").attr("transform", "rotate(-90)").attr("y", 0 - margin.left).attr("x", 0 - (innerHeight / 2)).attr("dy", "0.71em").attr("text-anchor", "middle").attr("font-size", "12px").attr("fill", "#6b5f57").text("10⁶ Kg");
 
   const color = d3.scaleOrdinal().domain(series.map((d) => d.name)).range(colors);
   const line = d3.line().x((d) => x(d.date)).y((d) => y(d.value));
@@ -572,7 +581,7 @@ const drawLine = (container, series, colors) => {
           .attr("stroke", "#fff")
           .attr("stroke-width", 2);
 
-        tooltipText += `${s.name}: ${d.value.toFixed(1)}%\n`;
+        tooltipText += `${s.name}: ${d.value.toFixed(1)} 10⁶ Kg\n`;
         hasData = true;
       }
     });
@@ -697,7 +706,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
         .style("opacity", 1)
         .style("left", `${event.clientX + 12}px`)
         .style("top", `${event.clientY + 12}px`)
-        .text(`${name}: ${formatValue(value)} L`);
+        .text(`${name}: ${formatValue(value)} Kg`);
     })
     .on("mouseleave", () => tooltipEl.style("opacity", 0))
     .on("click", (event, d) => {
@@ -759,7 +768,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
           .style("opacity", 1)
           .style("left", `${event.clientX + 12}px`)
           .style("top", `${event.clientY + 12}px`)
-          .text(`${direction}: ${formatValue(d.value)} L`);
+          .text(`${direction}: ${formatValue(d.value)} Kg`);
       })
       .on("mouseleave", () => tooltipEl.style("opacity", 0));
   }
@@ -861,15 +870,17 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
 };
 
 const renderCountryDetail = (data) => {
+  // Filter by slider date and product to match map display
+  const sliderFilteredData = filterByDateWithSlider(data).filter((d) => d.product === state.product);
   const hasSelectedData = state.selectedCountry
-    ? data.some((d) => d.partner === state.selectedCountry)
+    ? sliderFilteredData.some((d) => d.partner === state.selectedCountry)
     : false;
 
-  if (!hasSelectedData) {
-    const yearData = data.filter((d) => d.year === state.year);
+  // Only auto-select a new country if current selection has no data AND is not the reporter
+  if (!hasSelectedData && state.selectedCountry !== state.reporter) {
     const topPartner = d3
       .rollups(
-        yearData,
+        sliderFilteredData,
         (v) => d3.sum(v, (d) => d.value),
         (d) => d.partner
       )
@@ -922,19 +933,20 @@ const renderCountryDetail = (data) => {
     countryData,
     (v) => {
       const total = d3.sum(v, (d) => d.value);
-      const lait = d3.sum(v.filter((d) => productCategory(d.product) === "Lait"), (d) => d.value);
-      const yaourt = d3.sum(v.filter((d) => productCategory(d.product) === "Yaourt"), (d) => d.value);
-      return { total, lait, yaourt };
+      const buttermilk = d3.sum(v.filter((d) => productCategory(d.product) === "Buttermilk"), (d) => d.value);
+      const milkConcentrated = d3.sum(v.filter((d) => productCategory(d.product) === "Milk concentrated"), (d) => d.value);
+      const milkNotConcentrated = d3.sum(v.filter((d) => productCategory(d.product) === "Milk not concentrated"), (d) => d.value);
+      return { total, buttermilk, milkConcentrated, milkNotConcentrated };
     },
     (d) => formatMonth(d.date)
   )
     .map(([dateKey, values]) => {
-      const all = totalMap.get(dateKey) || 0;
       return {
         date: parseMonth(dateKey),
-        total: all ? (values.total / all) * 100 : 0,
-        lait: all ? (values.lait / all) * 100 : 0,
-        yaourt: all ? (values.yaourt / all) * 100 : 0,
+        total: values.total / 1000000,
+        buttermilk: values.buttermilk / 1000000,
+        milkConcentrated: values.milkConcentrated / 1000000,
+        milkNotConcentrated: values.milkNotConcentrated / 1000000,
       };
     })
     .filter((d) => d.date)
@@ -942,12 +954,13 @@ const renderCountryDetail = (data) => {
 
   const series = [
     { name: "Total", values: countryByDate.map((d) => ({ date: d.date, value: d.total })) },
-    { name: "Lait", values: countryByDate.map((d) => ({ date: d.date, value: d.lait })) },
-    { name: "Yaourt", values: countryByDate.map((d) => ({ date: d.date, value: d.yaourt })) },
+    { name: "Buttermilk", values: countryByDate.map((d) => ({ date: d.date, value: d.buttermilk })) },
+    { name: "Milk concentrated", values: countryByDate.map((d) => ({ date: d.date, value: d.milkConcentrated })) },
+    { name: "Milk not concentrated", values: countryByDate.map((d) => ({ date: d.date, value: d.milkNotConcentrated })) },
   ];
 
-  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#3f6b3f"]);
-  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#3f6b3f"]);
+  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
+  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
 };
 
 let cachedData = [];
