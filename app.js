@@ -282,12 +282,20 @@ const pruneFranceOverseas = (feature) => {
 
 const productCategory = (name) => {
   const lower = name.toLowerCase();
-  if (lower.includes("buttermilk")) return "Buttermilk";
-  if (lower.includes("concentrated") || lower.includes("evaporated") || lower.includes("condensed")) {
-    return "Milk concentrated";
+  // Check most specific first to avoid mismatches
+  // Buttermilk must come before Butter check (since "buttermilk" contains "butter")
+  if (lower.includes("buttermilk") || lower.includes("yogurt") || lower.includes("kephir") || lower.includes("fermented") || lower.includes("curdled")) {
+    return "Buttermilk";
   }
-  if (lower.includes("milk") && !lower.includes("concentrated") && !lower.includes("buttermilk")) {
-    return "Milk not concentrated";
+  if (lower.includes("butter")) {
+    return "Butter";
+  }
+  if (lower.includes("whey")) {
+    return "Whey";
+  }
+  // Milk concentrated - check last since it's most general
+  if (lower.includes("milk") && (lower.includes("concentrated") || lower.includes("evaporated") || lower.includes("condensed"))) {
+    return "Milk concentrated";
   }
   return "Other";
 };
@@ -870,14 +878,34 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
 };
 
 const renderCountryDetail = (data) => {
-  // Filter by slider date and product to match map display
-  const sliderFilteredData = filterByDateWithSlider(data).filter((d) => d.product === state.product);
+  // Don't show country detail if selected country is the reporter (no self-trade data)
+  if (state.selectedCountry === state.reporter) {
+    // Auto-select a partner of the reporter instead
+    const topPartner = d3
+      .rollups(
+        data,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => d.partner
+      )
+      .sort((a, b) => d3.descending(a[1], b[1]))[0];
+    
+    state.selectedCountry = topPartner ? topPartner[0] : "";
+    if (!state.selectedCountry) {
+      charts.countryLine.selectAll("*").remove();
+      charts.countryLineLegend.selectAll("*").remove();
+      return;
+    }
+  }
+
+  // Check if selected country has any data across all time periods
   const hasSelectedData = state.selectedCountry
-    ? sliderFilteredData.some((d) => d.partner === state.selectedCountry)
+    ? data.some((d) => d.partner === state.selectedCountry)
     : false;
 
   // Only auto-select a new country if current selection has no data AND is not the reporter
   if (!hasSelectedData && state.selectedCountry !== state.reporter) {
+    // For auto-selection, prioritize based on slider date and product to match map
+    const sliderFilteredData = filterByDateWithSlider(data).filter((d) => d.product === state.product);
     const topPartner = d3
       .rollups(
         sliderFilteredData,
@@ -894,7 +922,35 @@ const renderCountryDetail = (data) => {
     return;
   }
 
-  const countryData = data.filter((d) => d.partner === state.selectedCountry);
+  let countryData = data.filter((d) => d.partner === state.selectedCountry);
+  
+  // If no data found for selected country and we haven't explicitly set it, try auto-select
+  if (countryData.length === 0) {
+    // Only auto-select if this wasn't an explicit user click (when reporter changes)
+    // Check if current selectedCountry is actually a valid partner
+    const topPartner = d3
+      .rollups(
+        data,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => d.partner
+      )
+      .sort((a, b) => d3.descending(a[1], b[1]))[0];
+    
+    if (topPartner && topPartner[0] !== state.selectedCountry) {
+      state.selectedCountry = topPartner[0];
+      // Use the top partner's data
+      countryData = data.filter((d) => d.partner === state.selectedCountry);
+      if (countryData.length === 0) {
+        charts.countryLine.selectAll("*").remove();
+        charts.countryLineLegend.selectAll("*").remove();
+        return;
+      }
+    } else {
+      charts.countryLine.selectAll("*").remove();
+      charts.countryLineLegend.selectAll("*").remove();
+      return;
+    }
+  }
   if (charts.countryPie.node()) {
     const yearData = countryData.filter((d) => d.year === state.year);
 
@@ -935,8 +991,9 @@ const renderCountryDetail = (data) => {
       const total = d3.sum(v, (d) => d.value);
       const buttermilk = d3.sum(v.filter((d) => productCategory(d.product) === "Buttermilk"), (d) => d.value);
       const milkConcentrated = d3.sum(v.filter((d) => productCategory(d.product) === "Milk concentrated"), (d) => d.value);
-      const milkNotConcentrated = d3.sum(v.filter((d) => productCategory(d.product) === "Milk not concentrated"), (d) => d.value);
-      return { total, buttermilk, milkConcentrated, milkNotConcentrated };
+      const whey = d3.sum(v.filter((d) => productCategory(d.product) === "Whey"), (d) => d.value);
+      const butter = d3.sum(v.filter((d) => productCategory(d.product) === "Butter"), (d) => d.value);
+      return { total, buttermilk, milkConcentrated, whey, butter };
     },
     (d) => formatMonth(d.date)
   )
@@ -946,7 +1003,8 @@ const renderCountryDetail = (data) => {
         total: values.total / 1000000,
         buttermilk: values.buttermilk / 1000000,
         milkConcentrated: values.milkConcentrated / 1000000,
-        milkNotConcentrated: values.milkNotConcentrated / 1000000,
+        whey: values.whey / 1000000,
+        butter: values.butter / 1000000,
       };
     })
     .filter((d) => d.date)
@@ -956,11 +1014,12 @@ const renderCountryDetail = (data) => {
     { name: "Total", values: countryByDate.map((d) => ({ date: d.date, value: d.total })) },
     { name: "Buttermilk", values: countryByDate.map((d) => ({ date: d.date, value: d.buttermilk })) },
     { name: "Milk concentrated", values: countryByDate.map((d) => ({ date: d.date, value: d.milkConcentrated })) },
-    { name: "Milk not concentrated", values: countryByDate.map((d) => ({ date: d.date, value: d.milkNotConcentrated })) },
+    { name: "Whey", values: countryByDate.map((d) => ({ date: d.date, value: d.whey })) },
+    { name: "Butter", values: countryByDate.map((d) => ({ date: d.date, value: d.butter })) },
   ];
 
-  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
-  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
+  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a"]);
+  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a"]);
 };
 
 let cachedData = [];
