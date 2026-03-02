@@ -188,6 +188,8 @@ const btnProductsEl = d3.select("#btnProducts");
 const productDropdownEl = d3.select("#productDropdown");
 
 let reporterSelectRef = null;
+let yearSelectRef = null;
+let monthSelectRef = null;
 let reporterSet = new Set();
 let allDates = []; // Array of { year, month } objects sorted by date
 const dateSliderEl = d3.select("#dateSlider");
@@ -384,6 +386,7 @@ const buildFilters = (data) => {
       render(data);
     }
   );
+  yearSelectRef = yearSelect;
 
   const monthOptions = [{ label: "All", value: "" }].concat(
     months.map((d) => ({ label: MONTHS[Number(d) - 1], value: d }))
@@ -393,6 +396,7 @@ const buildFilters = (data) => {
     updateSliderFromFilters();
     render(data);
   });
+  monthSelectRef = monthSelect;
 
   updateSelectValue(reporterSelect, state.reporter);
   updateSelectValue(flowSelect, state.flow);
@@ -621,13 +625,13 @@ const drawLineLegend = (container, series, colors) => {
   items.append("strong").text((d) => d.name);
 };
 
-const drawMap = (container, features, values, flows, reporter, flow, importValues, exportValues) => {
+const drawMap = (container, allCountries, europeFeatures, values, flows, reporter, flow, importValues, exportValues) => {
   const width = container.node().clientWidth;
   const height = container.node().clientHeight;
   container.selectAll("*").remove();
 
   const svg = container.append("svg").attr("width", width).attr("height", height);
-  const europe = { type: "FeatureCollection", features };
+  const europe = { type: "FeatureCollection", features: europeFeatures };
   const projection = d3.geoMercator().fitSize([width, height], europe);
   projection
     .scale(projection.scale() * MAP_ZOOM)
@@ -649,7 +653,7 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
   const bothColor = d3.scaleSequential().domain([0, maxBoth || 1]).interpolator(d3.interpolatePurples);
 
   const centroids = new Map(
-    features.map((feature) => {
+    europeFeatures.map((feature) => {
       const name = normalizeCountry(feature.properties.name);
       const defaultCentroid = path.centroid(feature);
       
@@ -687,9 +691,23 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
 
   const mapLayer = svg.append("g").attr("clip-path", `url(#${clipId})`);
 
+  // Draw all countries in light grey first
   mapLayer
-    .selectAll("path")
-    .data(features)
+    .selectAll("path.background-country")
+    .data(allCountries)
+    .enter()
+    .append("path")
+    .attr("class", "background-country")
+    .attr("d", path)
+    .attr("fill", "#f5f5f5")
+    .attr("stroke", "#d3d3d3")
+    .attr("stroke-width", 0.5)
+    .style("pointer-events", "none");
+
+  // Draw European countries with data colors on top
+  mapLayer
+    .selectAll("path.country")
+    .data(europeFeatures)
     .enter()
     .append("path")
     .attr("class", "country")
@@ -697,7 +715,10 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
     .attr("d", path)
     .attr("fill", (d) => {
       const name = normalizeCountry(d.properties.name);
-      if (state.selectedCountry && name === state.selectedCountry) return "#cfe3ff";
+      if (state.selectedCountry && name === state.selectedCountry) {
+        console.log("Rendering selected country fill:", name, "-> #cfe3ff");
+        return "#cfe3ff";
+      }
 
       const importValue = importValues[name] || 0;
       const exportValue = exportValues[name] || 0;
@@ -708,6 +729,18 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
       if (importValue > 0) return importColor(importValue);
       if (exportValue > 0) return exportColor(exportValue);
       return "#d8d3cb";
+    })
+    .attr("stroke", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      const isSelected = state.selectedCountry && name === state.selectedCountry;
+      if (isSelected) {
+        console.log("Rendering selected country stroke:", name, "-> #1e4fa2");
+      }
+      return isSelected ? "#1e4fa2" : "#bbb";
+    })
+    .attr("stroke-width", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      return state.selectedCountry && name === state.selectedCountry ? 2.2 : 0.5;
     })
     .style("cursor", "pointer")
     .on("mousemove", (event, d) => {
@@ -722,7 +755,9 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
     .on("mouseleave", () => tooltipEl.style("opacity", 0))
     .on("click", (event, d) => {
       const clickedCountry = normalizeCountry(d.properties.name);
+      console.log("Country clicked:", clickedCountry);
       state.selectedCountry = clickedCountry;
+      console.log("state.selectedCountry set to:", state.selectedCountry);
       if (reporterSet.has(clickedCountry)) {
         state.reporter = clickedCountry;
         if (reporterSelectRef) {
@@ -818,6 +853,22 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
       .text("Import & Export");
 
   }
+
+  // EXPLICIT FINAL STEP: Force apply selection styling to ensure it persists
+  if (state.selectedCountry) {
+    console.log("FINAL STEP: Applying selection styling to", state.selectedCountry);
+    mapLayer.selectAll("path.country").each(function(d) {
+      const name = normalizeCountry(d.properties.name);
+      if (name === state.selectedCountry) {
+        d3.select(this)
+          .attr("fill", "#cfe3ff")
+          .attr("stroke", "#1e4fa2")
+          .attr("stroke-width", 2.2)
+          .classed("selected", true);
+        console.log("Applied selection styling to:", name);
+      }
+    });
+  }
 };
 
 const renderProductView = (data) => {
@@ -877,7 +928,7 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
     });
   });
 
-  drawMap(charts.map, europeFeatures, values, flows, state.reporter, state.flow, importValues, exportValues);
+  drawMap(charts.map, cachedAllCountries, europeFeatures, values, flows, state.reporter, state.flow, importValues, exportValues);
 };
 
 const renderCountryDetail = (data) => {
@@ -1027,8 +1078,10 @@ const renderCountryDetail = (data) => {
 
 let cachedData = [];
 let cachedEurope = [];
+let cachedAllCountries = [];
 
 const render = (data = cachedData) => {
+  console.log("render() called. state.selectedCountry =", state.selectedCountry);
   const base = baseFilter(data);
   productLabelEl.text(state.product || "No product");
   mapLabelEl.text(`${state.year || ""} ${state.month ? MONTHS[Number(state.month) - 1] : "All"}`);
@@ -1070,9 +1123,10 @@ const updateDateSliderLabel = () => {
   }
 };
 
-const init = (data, europeFeatures) => {
+const init = (data, allCountriesFeatures, europeFeatures) => {
   cachedData = data;
   cachedEurope = europeFeatures;
+  cachedAllCountries = allCountriesFeatures;
 
   const products = Array.from(new Set(data.map((d) => d.product))).sort(d3.ascending);
   state.product = state.product || products[0] || "";
@@ -1102,6 +1156,18 @@ const init = (data, europeFeatures) => {
       if (index >= 0 && index < allDates.length) {
         state.sliderYear = allDates[index].year;
         state.sliderMonth = allDates[index].month;
+        
+        // Update the Year and Month dropdowns to match the slider
+        state.year = state.sliderYear;
+        state.month = state.sliderMonth;
+        
+        if (yearSelectRef) {
+          updateSelectValue(yearSelectRef, state.year);
+        }
+        if (monthSelectRef) {
+          updateSelectValue(monthSelectRef, state.month);
+        }
+        
         updateDateSliderLabel();
         render();
       }
@@ -1121,5 +1187,5 @@ Promise.all([d3.csv(DATA_PATH_EARLIER, parseRow), d3.csv(DATA_PATH, parseRow), d
     .filter((d) => isEurope(d.properties.name))
     .map((feature) => pruneFranceOverseas(feature))
     .filter(Boolean);
-  init(mergedData, europe);
+  init(mergedData, allCountries, europe);
 });
