@@ -12,7 +12,7 @@ const state = {
 };
 
 const MAP_ZOOM = 1.4;
-const MAP_CENTER_OFFSET = [-100, 300];
+const MAP_CENTER_OFFSET = [-100, 440];
 
 const MONTHS = [
   "January",
