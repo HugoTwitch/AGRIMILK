@@ -1,4 +1,5 @@
 const DATA_PATH = "./data/ds-059341__custom_20322076_monthly_linear.csv";
+const DATA_PATH_EARLIER = "./data/ds-059341__custom_20322691_monthly_linear.csv";
 const MAP_PATH = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 const state = {
@@ -1111,11 +1112,14 @@ const init = (data, europeFeatures) => {
   onResize();
 };
 
-Promise.all([d3.csv(DATA_PATH, parseRow), d3.json(MAP_PATH)]).then(([data, world]) => {
+Promise.all([d3.csv(DATA_PATH_EARLIER, parseRow), d3.csv(DATA_PATH, parseRow), d3.json(MAP_PATH)]).then(([dataEarlier, dataRecent, world]) => {
+  // Merge both datasets, with recent data taking precedence if there are duplicates
+  const mergedData = [...dataEarlier, ...dataRecent];
+  
   const allCountries = topojson.feature(world, world.objects.countries).features;
   const europe = allCountries
     .filter((d) => isEurope(d.properties.name))
     .map((feature) => pruneFranceOverseas(feature))
     .filter(Boolean);
-  init(data, europe);
+  init(mergedData, europe);
 });
