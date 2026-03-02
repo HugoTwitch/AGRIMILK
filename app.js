@@ -7,7 +7,6 @@ const state = {
   year: "",
   month: "",
   product: "",
-  productQuery: "",
   selectedCountry: "",
 };
 
@@ -171,8 +170,6 @@ const parseMonth = d3.timeParse("%Y-%m");
 const formatMonth = d3.timeFormat("%Y-%m");
 
 const filtersEl = d3.select("#filters");
-const productListEl = d3.select("#productList");
-const productSearchEl = d3.select("#productSearch");
 const productLabelEl = d3.select("#productLabel");
 const mapLabelEl = d3.select("#mapLabel");
 const countryLabelEl = d3.select("#countryLabel");
@@ -319,7 +316,7 @@ const updateSelectValue = (select, value) => {
   select.property("value", value);
 };
 
-const buildFilters = (data) => {
+const buildFilters = (data, products) => {
   const reporters = Array.from(new Set(data.map((d) => d.reporter))).sort(d3.ascending);
   const flows = Array.from(new Set(data.map((d) => d.flow))).sort(d3.ascending);
   const years = Array.from(new Set(data.map((d) => d.year))).sort(d3.ascending);
@@ -331,6 +328,7 @@ const buildFilters = (data) => {
   state.flow = state.flow || "ALL";
   state.year = state.year || years[years.length - 1] || "";
   state.month = state.month || "";
+  state.product = state.product || products[0] || "";
 
   filtersEl.html("");
   const reporterSelect = createSelect(
@@ -368,31 +366,23 @@ const buildFilters = (data) => {
     render(data);
   });
 
+  const productSelect = createSelect(
+    "Product",
+    products.map((d) => ({ label: d, value: d })),
+    (value) => {
+      state.product = value;
+      render(data);
+    }
+  );
+
   updateSelectValue(reporterSelect, state.reporter);
   updateSelectValue(flowSelect, state.flow);
   updateSelectValue(yearSelect, state.year);
   updateSelectValue(monthSelect, state.month);
+  updateSelectValue(productSelect, state.product);
 };
 
-const buildProductList = (products, data) => {
-  const filtered = state.productQuery
-    ? products.filter((p) => p.toLowerCase().includes(state.productQuery))
-    : products;
 
-  const items = productListEl.selectAll("button").data(filtered, (d) => d);
-  items.exit().remove();
-
-  const enter = items.enter().append("button").attr("class", "product-item");
-  enter.merge(items)
-    .classed("active", (d) => d === state.product)
-    .text((d) => d)
-    .on("click", (event, d) => {
-      state.product = d;
-      productDropdownEl.classed("open", false);
-      render(data);
-      buildProductList(products, data);
-    });
-};
 
 const baseFilter = (data) => {
   return data.filter((d) => {
@@ -526,19 +516,27 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
     .translate([width / 2 + MAP_CENTER_OFFSET[0], height / 2 + MAP_CENTER_OFFSET[1]]);
   const path = d3.geoPath(projection);
 
-  const maxImport = d3.max(Object.values(importValues)) || 0;
-  const maxExport = d3.max(Object.values(exportValues)) || 0;
-  const maxBoth = d3.max(
-    Object.keys(importValues).map((key) => {
-      const importValue = importValues[key] || 0;
-      const exportValue = exportValues[key] || 0;
-      return importValue > 0 && exportValue > 0 ? importValue + exportValue : 0;
-    })
-  ) || 0;
-
-  const importColor = d3.scaleSequential().domain([0, maxImport || 1]).interpolator(d3.interpolateYlGn);
-  const exportColor = d3.scaleSequential().domain([0, maxExport || 1]).interpolator(d3.interpolateYlOrRd);
-  const bothColor = d3.scaleSequential().domain([0, maxBoth || 1]).interpolator(d3.interpolatePurples);
+  const maxValue = d3.max(Object.values(values)) || 0;
+  const minValue = d3.min(Object.values(values).filter((v) => v > 0)) || 0;
+  
+  const color = d3
+    .scaleSequentialLog()
+    .domain([minValue || 0.1, maxValue || 1])
+    .interpolator(
+      d3.interpolateRgbBasis([
+        "#f7f3ee",
+        "#fcebd9",
+        "#fdd6a8",
+        "#fcb97d",
+        "#fb8c52",
+        "#f36728",
+        "#e36414",
+        "#c54f0f",
+        "#a63c0a",
+        "#872906",
+        "#5c1a04",
+      ])
+    );
 
   const centroids = new Map(
     features.map((feature) => {
@@ -675,40 +673,77 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
       .on("mouseleave", () => tooltipEl.style("opacity", 0));
   }
 
+  // Gradient legend
   charts.mapLegend.html("");
-  if (flow === "IMPORT" || flow === "EXPORT") {
-    const isImport = flow === "IMPORT";
-    const scale = isImport ? importColor : exportColor;
-    const legendTitle = isImport ? "Import intensity" : "Export intensity";
-    const maxValue = isImport ? maxImport : maxExport;
+  
+  const legendWidth = 280;
+  const legendHeight = 12;
+  const legendSvg = charts.mapLegend
+    .append("svg")
+    .attr("width", legendWidth + 60)
+    .attr("height", legendHeight + 30)
+    .style("display", "block");
 
-    const block = charts.mapLegend.append("div").attr("class", "legend-block");
-    block.append("span").attr("class", "legend-title").text(legendTitle);
-    block
-      .append("span")
-      .attr("class", "legend-bar")
-      .style("background", `linear-gradient(90deg, ${scale(0)}, ${scale(maxValue * 0.5)}, ${scale(maxValue || 1)})`);
-  } else {
-    const importBlock = charts.mapLegend.append("div").attr("class", "legend-block");
-    importBlock.append("span").attr("class", "legend-title").text("Import intensity");
-    importBlock
-      .append("span")
-      .attr("class", "legend-bar")
-      .style("background", `linear-gradient(90deg, ${importColor(0)}, ${importColor(maxImport * 0.5)}, ${importColor(maxImport || 1)})`);
+  const gradientId = "map-gradient";
+  const legendDefs = legendSvg.append("defs");
+  const gradient = legendDefs
+    .append("linearGradient")
+    .attr("id", gradientId)
+    .attr("x1", "0%")
+    .attr("x2", "100%");
 
-    const exportBlock = charts.mapLegend.append("div").attr("class", "legend-block");
-    exportBlock.append("span").attr("class", "legend-title").text("Export intensity");
-    exportBlock
-      .append("span")
-      .attr("class", "legend-bar")
-      .style("background", `linear-gradient(90deg, ${exportColor(0)}, ${exportColor(maxExport * 0.5)}, ${exportColor(maxExport || 1)})`);
+  const colorStops = [
+    { offset: "0%", color: "#f7f3ee" },
+    { offset: "10%", color: "#fcebd9" },
+    { offset: "20%", color: "#fdd6a8" },
+    { offset: "30%", color: "#fcb97d" },
+    { offset: "40%", color: "#fb8c52" },
+    { offset: "50%", color: "#f36728" },
+    { offset: "60%", color: "#e36414" },
+    { offset: "70%", color: "#c54f0f" },
+    { offset: "80%", color: "#a63c0a" },
+    { offset: "90%", color: "#872906" },
+    { offset: "100%", color: "#5c1a04" },
+  ];
 
-    charts.mapLegend
-      .append("span")
-      .attr("class", "legend-swatch")
-      .text("Import & Export");
+  colorStops.forEach((stop) => {
+    gradient.append("stop").attr("offset", stop.offset).attr("stop-color", stop.color);
+  });
 
-  }
+  legendSvg
+    .append("rect")
+    .attr("x", 0)
+    .attr("y", 0)
+    .attr("width", legendWidth)
+    .attr("height", legendHeight)
+    .style("fill", `url(#${gradientId})`)
+    .style("stroke", "#e7dfd7")
+    .style("stroke-width", 1);
+
+  legendSvg
+    .append("text")
+    .attr("x", 0)
+    .attr("y", legendHeight + 18)
+    .attr("font-size", 11)
+    .attr("fill", "#6b5f57")
+    .text(minValue > 0 ? formatValue(minValue) : "0");
+
+  legendSvg
+    .append("text")
+    .attr("x", legendWidth)
+    .attr("y", legendHeight + 18)
+    .attr("text-anchor", "end")
+    .attr("font-size", 11)
+    .attr("fill", "#6b5f57")
+    .text(formatValue(maxValue));
+
+  charts.mapLegend
+    .append("span")
+    .style("margin-top", "8px")
+    .style("display", "block")
+    .style("font-size", "11px")
+    .style("color", "#6b5f57")
+    .text("Logarithmic scale • Arrows show import/export direction");
 };
 
 const renderProductView = (data) => {
@@ -941,14 +976,8 @@ const init = (data, europeFeatures) => {
   cachedEurope = europeFeatures;
 
   const products = Array.from(new Set(data.map((d) => d.product))).sort(d3.ascending);
-  state.product = state.product || products[0] || "";
 
-  buildFilters(data);
-  buildProductList(products, data);
-  productSearchEl.on("input", (event) => {
-    state.productQuery = event.target.value.trim().toLowerCase();
-    buildProductList(products, data);
-  });
+  buildFilters(data, products);
 
   render();
   onResize();

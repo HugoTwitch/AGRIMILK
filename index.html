@@ -16,26 +16,21 @@
     <header class="topbar">
       <div class="title">
         <h1>AGRIMILK</h1>
-        <p>Interactive view of European dairy trade flows</p>
-      </div>
-      <div class="topbar-right">
-        <div class="filters" id="filters"></div>
-        <div class="product-dropdown">
-          <button class="btn-products" id="btnProducts">Products ▼</button>
-          <div class="product-dropdown-content" id="productDropdown">
-            <input id="productSearch" type="search" placeholder="Search products" />
-            <div class="product-list" id="productList"></div>
-          </div>
-        </div>
+        <p>Interactive view of Europe Monthly Dairy Trade</p>
       </div>
     </header>
 
     <main class="layout">
-      <div class="map-product-container">
-        <section class="panel map">
-          <div class="panel-head">
-            <h2>Europe map</h2>
-            <div class="pill" id="mapLabel">Loading...</div>
+      <section class="panel product">
+        <div class="panel-head">
+          <h2>Product focus</h2>
+          <div class="pill" id="productLabel">Loading...</div>
+        </div>
+        <div class="split">
+          <div>
+            <h3>Region split</h3>
+            <div class="chart" id="regionPie"></div>
+            <p class="note" id="regionNote">Click EU slice to drill down.</p>
           </div>
           <div class="chart" id="map"></div>
           <div class="legend" id="mapLegend"></div>
@@ -55,22 +50,6 @@
     <div class="eu-list" id="euList"></div>
   </div>
 
-  <p class="note" id="euNote">Top 8 EU partners breakdown.</p>
-</div>
-
-          <div class="country-section">
-            <div class="panel-head">
-              <h3>Country details</h3>
-              <div class="pill" id="countryLabel">Select a country</div>
-            </div>
-            <div>
-              <h4>Share over time</h4>
-              <div class="chart chart-small" id="countryLine"></div>
-              <div class="line-legend" id="countryLineLegend"></div>
-            </div>
-          </div>
-        </section>
-      </div>
     </main>
 
     <div class="tooltip" id="tooltip"></div>

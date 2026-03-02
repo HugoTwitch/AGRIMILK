@@ -135,12 +135,24 @@ input {
   border: 1px solid var(--grid);
   font-family: "Space Grotesk", sans-serif;
   background: #fff;
+  max-width: 150px;
+  min-width: 50px;
+}
+
+select {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 150px;
+  min-width: 50px;
 }
 
 .layout {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-areas: "map-product";
+  grid-template-areas:
+    "map"
+    "product";
   gap: 16px;
   padding: 12px 24px 32px;
 }
@@ -170,16 +182,7 @@ input {
 }
 
 .product {
-  grid-area: auto;
-  overflow-y: auto;
-  max-height: 85vh;
-}
-
-
-.country-section {
-  margin-top: 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--grid);
+  grid-area: product;
 }
 
 .country-section h4 {
@@ -188,14 +191,6 @@ input {
   text-transform: uppercase;
   color: var(--muted);
   margin: 10px 0 6px;
-}
-
-.chart-small {
-  height: 180px;
-}
-
-.map {
-  grid-area: auto;
 }
 
 .split {
@@ -212,26 +207,7 @@ input {
   color: var(--muted);
 }
 
-.product-list {
-  display: grid;
-  gap: 8px;
-  max-height: 520px;
-  overflow: auto;
-  padding-right: 4px;
-}
 
-.product-item {
-  padding: 8px 10px;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  background: #fff;
-}
-
-.product-item.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(15, 76, 92, 0.2);
-}
 
 .chart {
   width: 100%;
@@ -414,9 +390,5 @@ input {
 @media (max-width: 1100px) {
   .map-product-container {
     grid-template-columns: 1fr;
-  }
-
-  .product-dropdown-content {
-    min-width: 280px;
   }
 }
