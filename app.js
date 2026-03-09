@@ -65,7 +65,7 @@ const EU_COUNTRIES = new Set([
 const EUROPE_EXTRA = new Set([
   "Albania",
   "Andorra",
-  "Belarus",
+  //"Belarus",
   "Bosnia and Herzegovina",
   "Georgia",
   "Iceland",
