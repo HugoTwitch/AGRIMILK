@@ -10,27 +10,37 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Fraunces:wght@400;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="title">
         <h1>AGRIMILK</h1>
-        <p>Interactive view of Europe Monthly Dairy Trade</p>
+        <p>Interactive view of European milk products trade flows</p>
+      </div>
+      <div class="topbar-right">
+        <div class="filters" id="filters"></div>
+        <div class="product-dropdown">
+          <button class="btn-products" id="btnProducts">Products ▼</button>
+          <div class="product-dropdown-content" id="productDropdown">
+            <input id="productSearch" type="search" placeholder="Search products" />
+            <div class="product-list" id="productList"></div>
+          </div>
+        </div>
       </div>
     </header>
 
     <main class="layout">
-      <section class="panel product">
-        <div class="panel-head">
-          <h2>Product focus</h2>
-          <div class="pill" id="productLabel">Loading...</div>
-        </div>
-        <div class="split">
-          <div>
-            <h3>Region split</h3>
-            <div class="chart" id="regionPie"></div>
-            <p class="note" id="regionNote">Click EU slice to drill down.</p>
+      <div class="map-product-container">
+        <section class="panel map">
+          <div class="panel-head">
+            <h2>Europe map</h2>
+            <div class="pill" id="mapLabel">Loading...</div>
+          </div>
+          <div class="timeline-slider">
+            <label for="dateSlider">Timeline:</label>
+            <input type="range" id="dateSlider" min="0" max="100" value="100" />
+            <span id="dateSliderLabel">Loading...</span>
           </div>
           <div class="chart" id="map"></div>
           <div class="legend" id="mapLegend"></div>
@@ -41,21 +51,40 @@
             <h2>Product focus</h2>
             <div class="pill" id="productLabel">Loading...</div>
           </div>
-         <div>
-  <h3>EU drill-down</h3>
+          <div>
+  <h3>Europe drill-down per year</h3>
 
-  <!-- Nouveau: ligne avec pie + liste -->
-  <div class="eu-row">
+  <div class="eu-drilldown-wrap">
     <div class="chart" id="euPie"></div>
-    <div class="eu-list" id="euList"></div>
+
+    <div class="eu-top-partners" id="euTopPartners"></div>
   </div>
 
+  <p class="note" id="euNote">Top 8 European partners breakdown.</p>
+</div>
+          <div class="country-section">
+            <div class="panel-head">
+              <h3>Country details</h3>
+              <div class="pill" id="countryLabel">Select a country</div>
+            </div>
+            <div>
+              <h4>Share over time</h4>
+              <div class="chart chart-small" id="countryLine"></div>
+              <div class="line-legend" id="countryLineLegend"></div>
+            </div>
+          </div>
+          <p class="note data-source">
+Data source: Eurostat (custom dataset) –
+<a href="https://ec.europa.eu/eurostat/en/" target="_blank">eurostat.europa.eu</a>
+</p>
+        </section>
+      </div>
     </main>
 
     <div class="tooltip" id="tooltip"></div>
 
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-    <script src="app.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>
