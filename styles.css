@@ -432,6 +432,74 @@ input {
   transform: scale(1.1);
 }
 
+.data-source{
+  margin-top:16px;
+  font-size:12px;
+  color:#999;
+}
+
+.data-source a{
+  color:#0f4c5c;
+  text-decoration:none;
+}
+
+.data-source a:hover{
+  text-decoration:underline;
+}
+
+.eu-drilldown-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) 220px;
+  gap: 16px;
+  align-items: center;
+}
+
+.eu-top-partners {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.eu-top-partners table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--grid);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.eu-top-partners td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--grid);
+  vertical-align: middle;
+}
+
+.eu-top-partners tr:last-child td {
+  border-bottom: none;
+}
+
+.eu-top-partners td.rank {
+  width: 28px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.eu-top-partners td.country {
+  font-weight: 600;
+}
+
+.eu-top-partners td.value {
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1350px) {
+  .eu-drilldown-wrap {
+    grid-template-columns: 1fr;
+  }
+}
+
 .timeline-slider input[type="range"]::-moz-range-track {
   background: transparent;
   border: none;
