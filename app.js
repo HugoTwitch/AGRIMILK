@@ -1,4 +1,5 @@
-const DATA_PATH = "data/ds-059341__custom_20028720_linear.csv";
+const DATA_PATH = "./data/ds-059341__custom_20322076_monthly_linear.csv";
+const DATA_PATH_EARLIER = "./data/ds-059341__custom_20322691_monthly_linear.csv";
 const MAP_PATH = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 const state = {
@@ -7,11 +8,14 @@ const state = {
   year: "",
   month: "",
   product: "",
+  productQuery: "",
   selectedCountry: "",
+  sliderYear: "",
+  sliderMonth: "",
 };
 
 const MAP_ZOOM = 1.4;
-const MAP_CENTER_OFFSET = [-100, 460];
+const MAP_CENTER_OFFSET = [-100, 560];
 
 const MONTHS = [
   "January",
@@ -61,18 +65,19 @@ const EU_COUNTRIES = new Set([
 const EUROPE_EXTRA = new Set([
   "Albania",
   "Andorra",
-  //"Armenia",
-  //"Azerbaijan",
   //"Belarus",
   "Bosnia and Herzegovina",
+  "Georgia",
   "Iceland",
   "Kosovo",
+  "Liechtenstein",
   "Moldova",
   "Montenegro",
   "North Macedonia",
   "Norway",
   "Serbia",
   "Switzerland",
+  "Turkey",
   "Ukraine",
   "United Kingdom",
 ]);
@@ -104,15 +109,12 @@ const AMERICAS = new Set([
 
 const ASIA = new Set([
   "Afghanistan",
-  "Armenia",
-  "Azerbaijan",
   "Bahrain",
   "Bangladesh",
   "Bhutan",
   "Brunei",
   "Cambodia",
   "China",
-  "Georgia",
   "India",
   "Indonesia",
   "Iran",
@@ -142,7 +144,6 @@ const ASIA = new Set([
   "Syria",
   "Taiwan",
   "Thailand",
-  "Turkey",
   "United Arab Emirates",
   "Uzbekistan",
   "Vietnam",
@@ -154,7 +155,14 @@ const COUNTRY_ALIASES = new Map([
   ["Korea, Republic of", "South Korea"],
   ["Moldova, Republic of", "Moldova"],
   ["Turkiye", "Turkey"],
-  ["United Kingdom", "United Kingdom"],
+  ["Türkiye", "Turkey"],
+  ["Belgium (incl. Luxembourg 'LU' -> 1998)", "Belgium"],
+  ["Germany (incl. German Democratic Republic 'DD' from 1991)", "Germany"],
+  ["Ireland (Eire)", "Ireland"],
+  ["United Kingdom (Northern Ireland)", "United Kingdom"],
+  ["Belarus (Belorussia)", "Belarus"],
+  ["Bosnia and Herz.", "Bosnia and Herzegovina"],
+  ["Macedonia", "North Macedonia"],
 ]);
 
 const KNOWN_COUNTRIES = new Set([
@@ -170,6 +178,8 @@ const parseMonth = d3.timeParse("%Y-%m");
 const formatMonth = d3.timeFormat("%Y-%m");
 
 const filtersEl = d3.select("#filters");
+const productListEl = d3.select("#productList");
+const productSearchEl = d3.select("#productSearch");
 const productLabelEl = d3.select("#productLabel");
 const mapLabelEl = d3.select("#mapLabel");
 const countryLabelEl = d3.select("#countryLabel");
@@ -178,7 +188,12 @@ const btnProductsEl = d3.select("#btnProducts");
 const productDropdownEl = d3.select("#productDropdown");
 
 let reporterSelectRef = null;
+let yearSelectRef = null;
+let monthSelectRef = null;
 let reporterSet = new Set();
+let allDates = []; // Array of { year, month } objects sorted by date
+const dateSliderEl = d3.select("#dateSlider");
+const dateSliderLabelEl = d3.select("#dateSliderLabel");
 
 // Toggle product dropdown
 btnProductsEl.on("click", (event) => {
@@ -202,6 +217,7 @@ const charts = {
   countryLine: d3.select("#countryLine"),
   countryLineLegend: d3.select("#countryLineLegend"),
   mapLegend: d3.select("#mapLegend"),
+  euPartnerList: d3.select("#euTopPartners"),
 };
 
 const stripDiacritics = (value) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -210,9 +226,12 @@ const normalizeCountry = (name) => {
   if (!name) return "";
   const trimmed = name.trim();
   const asciiName = stripDiacritics(trimmed);
+  
+  // Check direct aliases first
   if (COUNTRY_ALIASES.has(trimmed)) return COUNTRY_ALIASES.get(trimmed);
   if (COUNTRY_ALIASES.has(asciiName)) return COUNTRY_ALIASES.get(asciiName);
 
+  // Handle names with parentheses - extract base name
   const parenIndex = trimmed.indexOf(" (");
   if (parenIndex > 0) {
     const base = trimmed.slice(0, parenIndex);
@@ -269,12 +288,40 @@ const pruneFranceOverseas = (feature) => {
 
 const productCategory = (name) => {
   const lower = name.toLowerCase();
-  if (lower.includes("cheese")) return "Fromage";
-  if (lower.includes("yogurt") || lower.includes("yoghurt") || lower.includes("curdled")) {
-    return "Yaourt";
+  // Check most specific first to avoid mismatches
+  // Buttermilk must come before Butter check (since "buttermilk" contains "butter")
+  if (lower.includes("buttermilk") || lower.includes("yogurt") || lower.includes("kephir") || lower.includes("fermented") || lower.includes("curdled")) {
+    return "Buttermilk";
   }
-  if (lower.includes("milk") || lower.includes("cream")) return "Lait";
+  if (lower.includes("butter")) {
+    return "Butter";
+  }
+  if (lower.includes("whey")) {
+    return "Whey";
+  }
+  // Milk concentrated - check last since it's most general
+  if (lower.includes("milk") && (lower.includes("concentrated") || lower.includes("evaporated") || lower.includes("condensed"))) {
+    return "Milk concentrated";
+  }
   return "Other";
+};
+
+const shortProductName = (name) => {
+  const lower = name.toLowerCase();
+
+  if (lower.includes("buttermilk") || lower.includes("yogurt") || lower.includes("fermented"))
+    return "Buttermilk";
+
+  if (lower.includes("butter"))
+    return "Butter";
+
+  if (lower.includes("whey"))
+    return "Whey";
+
+  if (lower.includes("concentrated") || lower.includes("condensed") || lower.includes("evaporated"))
+    return "Milk concentrated";
+
+  return name;
 };
 
 const shortenProductLabel = (label, maxLength = 38) => {
@@ -316,7 +363,7 @@ const updateSelectValue = (select, value) => {
   select.property("value", value);
 };
 
-const buildFilters = (data, products) => {
+const buildFilters = (data) => {
   const reporters = Array.from(new Set(data.map((d) => d.reporter))).sort(d3.ascending);
   const flows = Array.from(new Set(data.map((d) => d.flow))).sort(d3.ascending);
   const years = Array.from(new Set(data.map((d) => d.year))).sort(d3.ascending);
@@ -328,7 +375,6 @@ const buildFilters = (data, products) => {
   state.flow = state.flow || "ALL";
   state.year = state.year || years[years.length - 1] || "";
   state.month = state.month || "";
-  state.product = state.product || products[0] || "";
 
   filtersEl.html("");
   const reporterSelect = createSelect(
@@ -336,6 +382,7 @@ const buildFilters = (data, products) => {
     reporters.map((d) => ({ label: d, value: d })),
     (value) => {
       state.reporter = value;
+      state.selectedCountry = value; // Make the reporter country highlighted on the map
       render(data);
     }
   );
@@ -354,35 +401,48 @@ const buildFilters = (data, products) => {
     years.map((d) => ({ label: d, value: d })),
     (value) => {
       state.year = value;
+      updateSliderFromFilters();
       render(data);
     }
   );
+  yearSelectRef = yearSelect;
 
   const monthOptions = [{ label: "All", value: "" }].concat(
     months.map((d) => ({ label: MONTHS[Number(d) - 1], value: d }))
   );
   const monthSelect = createSelect("Month", monthOptions, (value) => {
     state.month = value;
+    updateSliderFromFilters();
     render(data);
   });
-
-  const productSelect = createSelect(
-    "Product",
-    products.map((d) => ({ label: d, value: d })),
-    (value) => {
-      state.product = value;
-      render(data);
-    }
-  );
+  monthSelectRef = monthSelect;
 
   updateSelectValue(reporterSelect, state.reporter);
   updateSelectValue(flowSelect, state.flow);
   updateSelectValue(yearSelect, state.year);
   updateSelectValue(monthSelect, state.month);
-  updateSelectValue(productSelect, state.product);
 };
 
+const buildProductList = (products, data) => {
+  const filtered = state.productQuery
+    ? products.filter((p) => p.toLowerCase().includes(state.productQuery))
+    : products;
 
+  const items = productListEl.selectAll("button").data(filtered, (d) => d);
+  items.exit().remove();
+
+  const enter = items.enter().append("button").attr("class", "product-item");
+  enter.merge(items)
+    .classed("active", (d) => d === state.product)
+    .text((d) => shortProductName(d))
+    .on("click", (event, d) => {
+      state.product = d;
+      state.selectedCountry = ""; // Reset selected country when product changes
+      productDropdownEl.classed("open", false);
+      render(data);
+      buildProductList(products, data);
+    });
+};
 
 const baseFilter = (data) => {
   return data.filter((d) => {
@@ -400,6 +460,14 @@ const filterByDate = (data) => {
   });
 };
 
+const filterByDateWithSlider = (data) => {
+  return data.filter((d) => {
+    if (state.sliderYear && d.year !== state.sliderYear) return false;
+    if (state.sliderMonth && d.month !== state.sliderMonth) return false;
+    return true;
+  });
+};
+
 const drawPie = (container, data, colors, onSliceClick) => {
   const width = container.node().clientWidth;
   const height = container.node().clientHeight;
@@ -410,20 +478,25 @@ const drawPie = (container, data, colors, onSliceClick) => {
   const group = svg.append("g").attr("transform", `translate(${width / 2},${height / 2})`);
 
   if (!data.length) {
-    group.append("text").attr("text-anchor", "middle").attr("fill", "#6b5f57").text("No data");
+    group.append("text")
+      .attr("text-anchor", "middle")
+      .attr("fill", "#6b5f57")
+      .text("No data");
     return;
   }
 
-  const color = d3.scaleOrdinal().domain(data.map((d) => d.label)).range(colors);
+  const color = d3.scaleOrdinal()
+    .domain(data.map((d) => d.label))
+    .range(colors);
+
   const pie = d3.pie().value((d) => d.value);
   const arc = d3.arc().innerRadius(radius * 0.3).outerRadius(radius);
 
-  // On calcule une bonne fois les arcs
-  const pieData = pie(data);
+  const arcsData = pie(data);
 
   const arcs = group
     .selectAll("path")
-    .data(pieData)
+    .data(arcsData)
     .enter()
     .append("path")
     .attr("d", arc)
@@ -436,12 +509,9 @@ const drawPie = (container, data, colors, onSliceClick) => {
     arcs.on("click", (event, d) => onSliceClick(d.data.label));
   }
 
-  // Seuil d’angle : on n’affiche le texte que pour les parts assez grandes
-  const LABEL_ANGLE_THRESHOLD = 0.35; // ~20 degrés
-
   group
     .selectAll("text")
-    .data(pieData.filter((d) => d.endAngle - d.startAngle > LABEL_ANGLE_THRESHOLD))
+    .data(arcsData)
     .enter()
     .append("text")
     .attr("transform", (d) => `translate(${arc.centroid(d)})`)
@@ -449,9 +519,41 @@ const drawPie = (container, data, colors, onSliceClick) => {
     .attr("dy", "0.35em")
     .attr("font-size", 11)
     .attr("fill", "#1f1a16")
-    .text((d) => (d.data.value ? d.data.label : ""));
+    .text((d) => {
+      const angle = d.endAngle - d.startAngle;
+      return angle > 0.35 ? d.data.label : "";
+    });
 };
 
+const drawPartnerList = (container, data) => {
+  container.selectAll("*").remove();
+
+  if (!data.length) {
+    container.append("p").attr("class", "note").text("No data");
+    return;
+  }
+
+  const table = container.append("table");
+  const tbody = table.append("tbody");
+
+  const rows = tbody
+    .selectAll("tr")
+    .data(data)
+    .enter()
+    .append("tr");
+
+  rows.append("td")
+    .attr("class", "rank")
+    .text((d, i) => `${i + 1}.`);
+
+  rows.append("td")
+    .attr("class", "country")
+    .text((d) => d.label);
+
+  rows.append("td")
+    .attr("class", "value")
+    .text((d) => formatNumber(d.value));
+};
 
 const drawLine = (container, series, colors) => {
   const width = container.node().clientWidth;
@@ -478,6 +580,7 @@ const drawLine = (container, series, colors) => {
 
   plot.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(x).ticks(6));
   plot.append("g").call(d3.axisLeft(y).ticks(5));
+  plot.append("text").attr("transform", "rotate(-90)").attr("y", 0 - margin.left).attr("x", 0 - (innerHeight / 2)).attr("dy", "0.71em").attr("text-anchor", "middle").attr("font-size", "12px").attr("fill", "#6b5f57").text("10⁶ Kg");
 
   const color = d3.scaleOrdinal().domain(series.map((d) => d.name)).range(colors);
   const line = d3.line().x((d) => x(d.date)).y((d) => y(d.value));
@@ -492,6 +595,85 @@ const drawLine = (container, series, colors) => {
     .attr("stroke", (d) => color(d.name))
     .attr("stroke-width", 2)
     .attr("d", (d) => line(d.values));
+
+  // Scrubber interaction - vertical line and data points
+  const scrubberLine = plot.append("line")
+    .attr("class", "scrubber-line")
+    .attr("stroke", "#999")
+    .attr("stroke-width", 2)
+    .attr("y1", 0)
+    .attr("y2", innerHeight)
+    .style("opacity", 0)
+    .style("pointer-events", "none");
+
+  const scrubberTooltip = d3.select("body").append("div")
+    .style("position", "absolute")
+    .style("background", "rgba(31, 26, 22, 0.95)")
+    .style("color", "#fff")
+    .style("padding", "8px 12px")
+    .style("border-radius", "4px")
+    .style("font-size", "12px")
+    .style("pointer-events", "none")
+    .style("z-index", "1000")
+    .style("opacity", 0)
+    .style("white-space", "pre");
+
+  const dotsGroup = plot.append("g").attr("class", "scrubber-dots");
+
+  const interactiveRect = plot.append("rect")
+    .attr("width", innerWidth)
+    .attr("height", innerHeight)
+    .attr("fill", "transparent")
+    .style("cursor", "crosshair");
+
+  interactiveRect.on("mousemove", function(event) {
+    const xPos = d3.pointer(event)[0];
+    const date = x.invert(xPos);
+
+    scrubberLine.attr("x1", xPos).attr("x2", xPos).style("opacity", 0.6);
+    dotsGroup.selectAll("circle").remove();
+
+    let tooltipText = d3.timeFormat("%b %Y")(date) + "\n";
+    let hasData = false;
+
+    series.forEach((s) => {
+      const bisect = d3.bisector((d) => d.date).left;
+      const idx = bisect(s.values, date);
+
+      if (idx > 0 && idx < s.values.length) {
+        const d0 = s.values[idx - 1];
+        const d1 = s.values[idx];
+        const d = date - d0.date > d1.date - date ? d1 : d0;
+
+        const xCoord = x(d.date);
+        const yCoord = y(d.value);
+
+        dotsGroup.append("circle")
+          .attr("cx", xCoord)
+          .attr("cy", yCoord)
+          .attr("r", 5)
+          .attr("fill", color(s.name))
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 2);
+
+        tooltipText += `${s.name}: ${d.value.toFixed(1)} 10⁶ Kg\n`;
+        hasData = true;
+      }
+    });
+
+    if (hasData) {
+      scrubberTooltip
+        .style("opacity", 1)
+        .style("left", (event.clientX + 10) + "px")
+        .style("top", (event.clientY + 10) + "px")
+        .html(tooltipText.split("\n").join("<br>"));
+    }
+  })
+  .on("mouseleave", function() {
+    scrubberLine.style("opacity", 0);
+    dotsGroup.selectAll("circle").remove();
+    scrubberTooltip.style("opacity", 0);
+  });
 };
 
 const drawLineLegend = (container, series, colors) => {
@@ -503,45 +685,45 @@ const drawLineLegend = (container, series, colors) => {
   items.append("strong").text((d) => d.name);
 };
 
-const drawMap = (container, features, values, flows, reporter, flow, importValues, exportValues) => {
+const drawMap = (container, allCountries, europeFeatures, values, flows, reporter, flow, importValues, exportValues) => {
   const width = container.node().clientWidth;
   const height = container.node().clientHeight;
   container.selectAll("*").remove();
 
   const svg = container.append("svg").attr("width", width).attr("height", height);
-  const europe = { type: "FeatureCollection", features };
+  const europe = { type: "FeatureCollection", features: europeFeatures };
   const projection = d3.geoMercator().fitSize([width, height], europe);
   projection
     .scale(projection.scale() * MAP_ZOOM)
     .translate([width / 2 + MAP_CENTER_OFFSET[0], height / 2 + MAP_CENTER_OFFSET[1]]);
   const path = d3.geoPath(projection);
 
-  const maxValue = d3.max(Object.values(values)) || 0;
-  const minValue = d3.min(Object.values(values).filter((v) => v > 0)) || 0;
-  
-  const color = d3
-    .scaleSequentialLog()
-    .domain([minValue || 0.1, maxValue || 1])
-    .interpolator(
-      d3.interpolateRgbBasis([
-        "#f7f3ee",
-        "#fcebd9",
-        "#fdd6a8",
-        "#fcb97d",
-        "#fb8c52",
-        "#f36728",
-        "#e36414",
-        "#c54f0f",
-        "#a63c0a",
-        "#872906",
-        "#5c1a04",
-      ])
-    );
+  const maxImport = d3.max(Object.values(importValues)) || 0;
+  const maxExport = d3.max(Object.values(exportValues)) || 0;
+  const maxBoth = d3.max(
+    Object.keys(importValues).map((key) => {
+      const importValue = importValues[key] || 0;
+      const exportValue = exportValues[key] || 0;
+      return importValue > 0 && exportValue > 0 ? importValue + exportValue : 0;
+    })
+  ) || 0;
+
+  const importColor = d3.scaleSequential().domain([0, maxImport || 1]).interpolator(d3.interpolateGreens);
+  const exportColor = d3.scaleSequential().domain([0, maxExport || 1]).interpolator(d3.interpolateReds);
+  const bothColor = d3.scaleSequential().domain([0, maxBoth || 1]).interpolator(d3.interpolatePurples);
 
   const centroids = new Map(
-    features.map((feature) => {
+    europeFeatures.map((feature) => {
       const name = normalizeCountry(feature.properties.name);
-      return [name, path.centroid(feature)];
+      const defaultCentroid = path.centroid(feature);
+      
+      // Manual adjustment for Norway to point to Oslo/central Norway area
+      if (name === "Norway") {
+        // Move significantly down (south) and slightly left to hit mainland Norway
+        return [name, [defaultCentroid[0] - 70, defaultCentroid[1] + 270]];
+      }
+      
+      return [name, defaultCentroid];
     })
   );
 
@@ -569,57 +751,81 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
 
   const mapLayer = svg.append("g").attr("clip-path", `url(#${clipId})`);
 
+  // Draw all countries in light grey first
   mapLayer
-  .selectAll("path")
-  .data(features)
-  .enter()
-  .append("path")
-  .attr("class", "country")
-  .classed("selected", (d) => normalizeCountry(d.properties.name) === state.selectedCountry)
-  .attr("d", path)
-  // départ en blanc
-  .attr("fill", "#ffffff")
-  // transition vers la vraie couleur
-  .transition()
-  .duration(400)
-  .attr("fill", (d) => {
-    const name = normalizeCountry(d.properties.name);
-    if (state.selectedCountry && name === state.selectedCountry) return "#cfe3ff";
+    .selectAll("path.background-country")
+    .data(allCountries)
+    .enter()
+    .append("path")
+    .attr("class", "background-country")
+    .attr("d", path)
+    .attr("fill", "#f5f5f5")
+    .attr("stroke", "#d3d3d3")
+    .attr("stroke-width", 0.5)
+    .style("pointer-events", "none");
 
-    const importValue = importValues[name] || 0;
-    const exportValue = exportValues[name] || 0;
-
-    if (flow === "IMPORT") return importValue > 0 ? importColor(importValue) : "#d8d3cb";
-    if (flow === "EXPORT") return exportValue > 0 ? exportColor(exportValue) : "#d8d3cb";
-    if (importValue > 0 && exportValue > 0) return "#f6e7a5";
-    if (importValue > 0) return importColor(importValue);
-    if (exportValue > 0) return exportColor(exportValue);
-    return "#d8d3cb";
-  })
-  .selection() // retour à la sélection pour les events
-  .style("cursor", "pointer")
-  .on("mousemove", (event, d) => {
-    const name = normalizeCountry(d.properties.name);
-    const value = values[name] || 0;
-    tooltipEl
-      .style("opacity", 1)
-      .style("left", `${event.clientX + 12}px`)
-      .style("top", `${event.clientY + 12}px`)
-      .text(`${name}: ${formatValue(value)}`);
-  })
-  .on("mouseleave", () => tooltipEl.style("opacity", 0))
-  .on("click", (event, d) => {
-    const clickedCountry = normalizeCountry(d.properties.name);
-    state.selectedCountry = clickedCountry;
-    if (reporterSet.has(clickedCountry)) {
-      state.reporter = clickedCountry;
-      if (reporterSelectRef) {
-        updateSelectValue(reporterSelectRef, state.reporter);
+  // Draw European countries with data colors on top
+  mapLayer
+    .selectAll("path.country")
+    .data(europeFeatures)
+    .enter()
+    .append("path")
+    .attr("class", "country")
+    .classed("selected", (d) => normalizeCountry(d.properties.name) === state.selectedCountry)
+    .attr("d", path)
+    .attr("fill", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      if (state.selectedCountry && name === state.selectedCountry) {
+        console.log("Rendering selected country fill:", name, "-> #cfe3ff");
+        return "#cfe3ff";
       }
-    }
-    render();
-  });
 
+      const importValue = importValues[name] || 0;
+      const exportValue = exportValues[name] || 0;
+
+      if (flow === "IMPORT") return importValue > 0 ? importColor(importValue) : "#d8d3cb";
+      if (flow === "EXPORT") return exportValue > 0 ? exportColor(exportValue) : "#d8d3cb";
+      if (importValue > 0 && exportValue > 0) return "#f6e7a5";
+      if (importValue > 0) return importColor(importValue);
+      if (exportValue > 0) return exportColor(exportValue);
+      return "#d8d3cb";
+    })
+    .attr("stroke", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      const isSelected = state.selectedCountry && name === state.selectedCountry;
+      if (isSelected) {
+        console.log("Rendering selected country stroke:", name, "-> #1e4fa2");
+      }
+      return isSelected ? "#1e4fa2" : "#bbb";
+    })
+    .attr("stroke-width", (d) => {
+      const name = normalizeCountry(d.properties.name);
+      return state.selectedCountry && name === state.selectedCountry ? 2.2 : 0.5;
+    })
+    .style("cursor", "pointer")
+    .on("mousemove", (event, d) => {
+      const name = normalizeCountry(d.properties.name);
+      const value = values[name] || 0;
+      tooltipEl
+        .style("opacity", 1)
+        .style("left", `${event.clientX + 12}px`)
+        .style("top", `${event.clientY + 12}px`)
+        .text(`${name}: ${formatValue(value)} Kg`);
+    })
+    .on("mouseleave", () => tooltipEl.style("opacity", 0))
+    .on("click", (event, d) => {
+      const clickedCountry = normalizeCountry(d.properties.name);
+      console.log("Country clicked:", clickedCountry);
+      state.selectedCountry = clickedCountry;
+      console.log("state.selectedCountry set to:", state.selectedCountry);
+      if (reporterSet.has(clickedCountry)) {
+        state.reporter = clickedCountry;
+        if (reporterSelectRef) {
+          updateSelectValue(reporterSelectRef, state.reporter);
+        }
+      }
+      render();
+    });
 
   const showArrows = flow === "ALL";
   if (showArrows) {
@@ -668,156 +874,82 @@ const drawMap = (container, features, values, flows, reporter, flow, importValue
           .style("opacity", 1)
           .style("left", `${event.clientX + 12}px`)
           .style("top", `${event.clientY + 12}px`)
-          .text(`${direction}: ${formatValue(d.value)}`);
+          .text(`${direction}: ${formatValue(d.value)} Kg`);
       })
       .on("mouseleave", () => tooltipEl.style("opacity", 0));
   }
 
-  // Gradient legend
   charts.mapLegend.html("");
-  
-  const legendWidth = 280;
-  const legendHeight = 12;
-  const legendSvg = charts.mapLegend
-    .append("svg")
-    .attr("width", legendWidth + 60)
-    .attr("height", legendHeight + 30)
-    .style("display", "block");
+  if (flow === "IMPORT" || flow === "EXPORT") {
+    const isImport = flow === "IMPORT";
+    const scale = isImport ? importColor : exportColor;
+    const legendTitle = isImport ? "Import" : "Export";
+    const maxValue = isImport ? maxImport : maxExport;
 
-  const gradientId = "map-gradient";
-  const legendDefs = legendSvg.append("defs");
-  const gradient = legendDefs
-    .append("linearGradient")
-    .attr("id", gradientId)
-    .attr("x1", "0%")
-    .attr("x2", "100%");
+    const block = charts.mapLegend.append("div").attr("class", "legend-block");
+    block.append("span").attr("class", "legend-title").text(legendTitle);
+    block
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${scale(0)}, ${scale(maxValue * 0.5)}, ${scale(maxValue || 1)})`);
+  } else {
+    const importBlock = charts.mapLegend.append("div").attr("class", "legend-block");
+    importBlock.append("span").attr("class", "legend-title").text("Import");
+    importBlock
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${importColor(0)}, ${importColor(maxImport * 0.5)}, ${importColor(maxImport || 1)})`);
 
-  const colorStops = [
-    { offset: "0%", color: "#f7f3ee" },
-    { offset: "10%", color: "#fcebd9" },
-    { offset: "20%", color: "#fdd6a8" },
-    { offset: "30%", color: "#fcb97d" },
-    { offset: "40%", color: "#fb8c52" },
-    { offset: "50%", color: "#f36728" },
-    { offset: "60%", color: "#e36414" },
-    { offset: "70%", color: "#c54f0f" },
-    { offset: "80%", color: "#a63c0a" },
-    { offset: "90%", color: "#872906" },
-    { offset: "100%", color: "#5c1a04" },
-  ];
+    const exportBlock = charts.mapLegend.append("div").attr("class", "legend-block");
+    exportBlock.append("span").attr("class", "legend-title").text("Export");
+    exportBlock
+      .append("span")
+      .attr("class", "legend-bar")
+      .style("background", `linear-gradient(90deg, ${exportColor(0)}, ${exportColor(maxExport * 0.5)}, ${exportColor(maxExport || 1)})`);
 
-  colorStops.forEach((stop) => {
-    gradient.append("stop").attr("offset", stop.offset).attr("stop-color", stop.color);
-  });
+    charts.mapLegend
+      .append("span")
+      .attr("class", "legend-swatch")
+      .text("Import & Export");
 
-  legendSvg
-    .append("rect")
-    .attr("x", 0)
-    .attr("y", 0)
-    .attr("width", legendWidth)
-    .attr("height", legendHeight)
-    .style("fill", `url(#${gradientId})`)
-    .style("stroke", "#e7dfd7")
-    .style("stroke-width", 1);
+  }
 
-  legendSvg
-    .append("text")
-    .attr("x", 0)
-    .attr("y", legendHeight + 18)
-    .attr("font-size", 11)
-    .attr("fill", "#6b5f57")
-    .text(minValue > 0 ? formatValue(minValue) : "0");
-
-  legendSvg
-    .append("text")
-    .attr("x", legendWidth)
-    .attr("y", legendHeight + 18)
-    .attr("text-anchor", "end")
-    .attr("font-size", 11)
-    .attr("fill", "#6b5f57")
-    .text(formatValue(maxValue));
-
-  charts.mapLegend
-    .append("span")
-    .style("margin-top", "8px")
-    .style("display", "block")
-    .style("font-size", "11px")
-    .style("color", "#6b5f57")
-    .text("Logarithmic scale • Arrows show import/export direction");
+  // EXPLICIT FINAL STEP: Force apply selection styling to ensure it persists
+  if (state.selectedCountry) {
+    console.log("FINAL STEP: Applying selection styling to", state.selectedCountry);
+    mapLayer.selectAll("path.country").each(function(d) {
+      const name = normalizeCountry(d.properties.name);
+      if (name === state.selectedCountry) {
+        d3.select(this)
+          .attr("fill", "#cfe3ff")
+          .attr("stroke", "#1e4fa2")
+          .attr("stroke-width", 2.2)
+          .classed("selected", true);
+        console.log("Applied selection styling to:", name);
+      }
+    });
+  }
 };
 
 const renderProductView = (data) => {
   const productData = data.filter((d) => d.product === state.product);
   const yearData = productData.filter((d) => d.year === state.year);
 
-  const euTotals = d3
-    .rollups(
-      yearData.filter((d) => regionForCountry(d.partner) === "EU"),
-      (v) => d3.sum(v, (d) => d.value),
-      (d) => d.partner
-    )
+  const euTotals = d3.rollups(
+    yearData.filter((d) => regionForCountry(d.partner) === "EU"),
+    (v) => d3.sum(v, (d) => d.value),
+    (d) => d.partner
+  )
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => d3.descending(a.value, b.value))
     .slice(0, 8);
 
-  // 1) Pie chart comme avant
-  drawPie(
-    charts.euPie,
-    euTotals,
-    ["#3f6b3f", "#8bbd8b", "#d0e4d0", "#f1e7db"]
-  );
-
-  // 2) Liste classée à droite
-  const euListEl = d3.select("#euList");
-  euListEl.selectAll("*").remove();
-
-  if (!euTotals.length) {
-    euListEl
-      .append("div")
-      .attr("class", "note")
-      .text("No EU data for this selection.");
-  } else {
-    const items = euListEl
-      .selectAll("div.eu-list-item")
-      .data(euTotals)
-      .enter()
-      .append("div")
-      .attr("class", "eu-list-item");
-
-    items
-      .append("span")
-      .attr("class", "eu-list-rank")
-      .text((d, i) => `${i + 1}.`);
-
-    items
-      .append("span")
-      .attr("class", "eu-list-label")
-      .text((d) => d.label);
-
-    items
-      .append("span")
-      .attr("class", "eu-list-value")
-      .text((d) => formatNumber(d.value));
-    
-  }
-
-  // 3) Mettre à jour la note sous le graphe
-  const euNoteEl = d3.select("#euNote");
-  if (!euNoteEl.empty()) {
-    if (euTotals.length) {
-      const totalEU = d3.sum(euTotals, (d) => d.value || 0);
-      euNoteEl.text(
-        `Top 8 EU partners breakdown · Total: ${formatNumber(totalEU)}`
-      );
-    } else {
-      euNoteEl.text("No EU data for this selection.");
-    }
-  }
+  drawPie(charts.euPie, euTotals, ["#3f6b3f", "#8bbd8b", "#d0e4d0", "#f1e7db"]);
+  drawPartnerList(charts.euPartnerList, euTotals);
 };
 
-
 const renderMapView = (filteredData, fullData, europeFeatures) => {
-  const filtered = filterByDate(filteredData).filter((d) => d.product === state.product);
+  const filtered = filterByDateWithSlider(filteredData).filter((d) => d.product === state.product);
   const totals = d3.rollups(
     filtered,
     (v) => d3.sum(v, (d) => d.value),
@@ -826,7 +958,7 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
   const values = Object.fromEntries(totals);
 
   const flowBase = fullData.filter((d) => (state.reporter ? d.reporter === state.reporter : true));
-  const flowFiltered = filterByDate(flowBase).filter((d) => d.product === state.product);
+  const flowFiltered = filterByDateWithSlider(flowBase).filter((d) => d.product === state.product);
   const flowTotals = d3.rollups(
     flowFiltered,
     (v) => d3.sum(v, (d) => d.value),
@@ -857,19 +989,41 @@ const renderMapView = (filteredData, fullData, europeFeatures) => {
     });
   });
 
-  drawMap(charts.map, europeFeatures, values, flows, state.reporter, state.flow, importValues, exportValues);
+  drawMap(charts.map, cachedAllCountries, europeFeatures, values, flows, state.reporter, state.flow, importValues, exportValues);
 };
 
 const renderCountryDetail = (data) => {
+  // Don't show country detail if selected country is the reporter (no self-trade data)
+  if (state.selectedCountry === state.reporter) {
+    // Auto-select a partner of the reporter instead
+    const topPartner = d3
+      .rollups(
+        data,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => d.partner
+      )
+      .sort((a, b) => d3.descending(a[1], b[1]))[0];
+    
+    state.selectedCountry = topPartner ? topPartner[0] : "";
+    if (!state.selectedCountry) {
+      charts.countryLine.selectAll("*").remove();
+      charts.countryLineLegend.selectAll("*").remove();
+      return;
+    }
+  }
+
+  // Check if selected country has any data across all time periods
   const hasSelectedData = state.selectedCountry
     ? data.some((d) => d.partner === state.selectedCountry)
     : false;
 
-  if (!hasSelectedData) {
-    const yearData = data.filter((d) => d.year === state.year);
+  // Only auto-select a new country if current selection has no data AND is not the reporter
+  if (!hasSelectedData && state.selectedCountry !== state.reporter) {
+    // For auto-selection, prioritize based on slider date and product to match map
+    const sliderFilteredData = filterByDateWithSlider(data).filter((d) => d.product === state.product);
     const topPartner = d3
       .rollups(
-        yearData,
+        sliderFilteredData,
         (v) => d3.sum(v, (d) => d.value),
         (d) => d.partner
       )
@@ -883,7 +1037,35 @@ const renderCountryDetail = (data) => {
     return;
   }
 
-  const countryData = data.filter((d) => d.partner === state.selectedCountry);
+  let countryData = data.filter((d) => d.partner === state.selectedCountry);
+  
+  // If no data found for selected country and we haven't explicitly set it, try auto-select
+  if (countryData.length === 0) {
+    // Only auto-select if this wasn't an explicit user click (when reporter changes)
+    // Check if current selectedCountry is actually a valid partner
+    const topPartner = d3
+      .rollups(
+        data,
+        (v) => d3.sum(v, (d) => d.value),
+        (d) => d.partner
+      )
+      .sort((a, b) => d3.descending(a[1], b[1]))[0];
+    
+    if (topPartner && topPartner[0] !== state.selectedCountry) {
+      state.selectedCountry = topPartner[0];
+      // Use the top partner's data
+      countryData = data.filter((d) => d.partner === state.selectedCountry);
+      if (countryData.length === 0) {
+        charts.countryLine.selectAll("*").remove();
+        charts.countryLineLegend.selectAll("*").remove();
+        return;
+      }
+    } else {
+      charts.countryLine.selectAll("*").remove();
+      charts.countryLineLegend.selectAll("*").remove();
+      return;
+    }
+  }
   if (charts.countryPie.node()) {
     const yearData = countryData.filter((d) => d.year === state.year);
 
@@ -922,21 +1104,22 @@ const renderCountryDetail = (data) => {
     countryData,
     (v) => {
       const total = d3.sum(v, (d) => d.value);
-      const lait = d3.sum(v.filter((d) => productCategory(d.product) === "Lait"), (d) => d.value);
-      const fromage = d3.sum(v.filter((d) => productCategory(d.product) === "Fromage"), (d) => d.value);
-      const yaourt = d3.sum(v.filter((d) => productCategory(d.product) === "Yaourt"), (d) => d.value);
-      return { total, lait, fromage, yaourt };
+      const buttermilk = d3.sum(v.filter((d) => productCategory(d.product) === "Buttermilk"), (d) => d.value);
+      const milkConcentrated = d3.sum(v.filter((d) => productCategory(d.product) === "Milk concentrated"), (d) => d.value);
+      const whey = d3.sum(v.filter((d) => productCategory(d.product) === "Whey"), (d) => d.value);
+      const butter = d3.sum(v.filter((d) => productCategory(d.product) === "Butter"), (d) => d.value);
+      return { total, buttermilk, milkConcentrated, whey, butter };
     },
     (d) => formatMonth(d.date)
   )
     .map(([dateKey, values]) => {
-      const all = totalMap.get(dateKey) || 0;
       return {
         date: parseMonth(dateKey),
-        total: all ? (values.total / all) * 100 : 0,
-        lait: all ? (values.lait / all) * 100 : 0,
-        fromage: all ? (values.fromage / all) * 100 : 0,
-        yaourt: all ? (values.yaourt / all) * 100 : 0,
+        total: values.total / 1000000,
+        buttermilk: values.buttermilk / 1000000,
+        milkConcentrated: values.milkConcentrated / 1000000,
+        whey: values.whey / 1000000,
+        butter: values.butter / 1000000,
       };
     })
     .filter((d) => d.date)
@@ -944,21 +1127,24 @@ const renderCountryDetail = (data) => {
 
   const series = [
     { name: "Total", values: countryByDate.map((d) => ({ date: d.date, value: d.total })) },
-    { name: "Lait", values: countryByDate.map((d) => ({ date: d.date, value: d.lait })) },
-    { name: "Fromage", values: countryByDate.map((d) => ({ date: d.date, value: d.fromage })) },
-    { name: "Yaourt", values: countryByDate.map((d) => ({ date: d.date, value: d.yaourt })) },
+    { name: "Buttermilk", values: countryByDate.map((d) => ({ date: d.date, value: d.buttermilk })) },
+    { name: "Milk concentrated", values: countryByDate.map((d) => ({ date: d.date, value: d.milkConcentrated })) },
+    { name: "Whey", values: countryByDate.map((d) => ({ date: d.date, value: d.whey })) },
+    { name: "Butter", values: countryByDate.map((d) => ({ date: d.date, value: d.butter })) },
   ];
 
-  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
-  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f"]);
+  drawLine(charts.countryLine, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a"]);
+  drawLineLegend(charts.countryLineLegend, series, ["#1f1a16", "#0f4c5c", "#e36414", "#3f6b3f", "#b9a89a"]);
 };
 
 let cachedData = [];
 let cachedEurope = [];
+let cachedAllCountries = [];
 
 const render = (data = cachedData) => {
+  console.log("render() called. state.selectedCountry =", state.selectedCountry);
   const base = baseFilter(data);
-  productLabelEl.text(state.product || "No product");
+  productLabelEl.text(state.product ? shortProductName(state.product) : "No product");
   mapLabelEl.text(`${state.year || ""} ${state.month ? MONTHS[Number(state.month) - 1] : "All"}`);
   countryLabelEl.text(state.selectedCountry || "Select a country");
 
@@ -971,23 +1157,96 @@ const onResize = () => {
   window.addEventListener("resize", () => render());
 };
 
-const init = (data, europeFeatures) => {
+const updateSliderFromFilters = () => {
+  if (!state.year || allDates.length === 0) return;
+  
+  // Find the index in allDates that matches state.year and state.month
+  let targetMonth = state.month || "01"; // Default to January if no month specified
+  let foundIndex = allDates.findIndex((d) => d.year === state.year && d.month === targetMonth);
+  
+  // If exact match not found and we have a year, find the first month of that year
+  if (foundIndex === -1) {
+    foundIndex = allDates.findIndex((d) => d.year === state.year);
+  }
+  
+  if (foundIndex !== -1) {
+    state.sliderYear = allDates[foundIndex].year;
+    state.sliderMonth = allDates[foundIndex].month;
+    dateSliderEl.attr("max", allDates.length - 1).property("value", foundIndex);
+    updateDateSliderLabel();
+  }
+};
+
+const updateDateSliderLabel = () => {
+  if (state.sliderYear && state.sliderMonth) {
+    const monthName = MONTHS[Number(state.sliderMonth) - 1];
+    dateSliderLabelEl.text(`${monthName} ${state.sliderYear}`);
+  }
+};
+
+const init = (data, allCountriesFeatures, europeFeatures) => {
   cachedData = data;
   cachedEurope = europeFeatures;
+  cachedAllCountries = allCountriesFeatures;
 
   const products = Array.from(new Set(data.map((d) => d.product))).sort(d3.ascending);
+  state.product = state.product || products[0] || "";
 
-  buildFilters(data, products);
+  buildFilters(data);
+  buildProductList(products, data);
+  productSearchEl.on("input", (event) => {
+    state.productQuery = event.target.value.trim().toLowerCase();
+    buildProductList(products, data);
+  });
+
+  // Initialize timeline slider
+  const uniqueDates = Array.from(new Set(data.map((d) => `${d.year}-${d.month}`)))
+    .sort()
+    .map((dateStr) => {
+      const [year, month] = dateStr.split("-");
+      return { year, month };
+    });
+  allDates = uniqueDates;
+
+  if (allDates.length > 0) {
+    // Sync slider with filter selections
+    updateSliderFromFilters();
+
+    dateSliderEl.on("input", (event) => {
+      const index = Number(event.target.value);
+      if (index >= 0 && index < allDates.length) {
+        state.sliderYear = allDates[index].year;
+        state.sliderMonth = allDates[index].month;
+        
+        // Update the Year and Month dropdowns to match the slider
+        state.year = state.sliderYear;
+        state.month = state.sliderMonth;
+        
+        if (yearSelectRef) {
+          updateSelectValue(yearSelectRef, state.year);
+        }
+        if (monthSelectRef) {
+          updateSelectValue(monthSelectRef, state.month);
+        }
+        
+        updateDateSliderLabel();
+        render();
+      }
+    });
+  }
 
   render();
   onResize();
 };
 
-Promise.all([d3.csv(DATA_PATH, parseRow), d3.json(MAP_PATH)]).then(([data, world]) => {
+Promise.all([d3.csv(DATA_PATH_EARLIER, parseRow), d3.csv(DATA_PATH, parseRow), d3.json(MAP_PATH)]).then(([dataEarlier, dataRecent, world]) => {
+  // Merge both datasets, with recent data taking precedence if there are duplicates
+  const mergedData = [...dataEarlier, ...dataRecent];
+  
   const allCountries = topojson.feature(world, world.objects.countries).features;
   const europe = allCountries
     .filter((d) => isEurope(d.properties.name))
     .map((feature) => pruneFranceOverseas(feature))
     .filter(Boolean);
-  init(data, europe);
+  init(mergedData, allCountries, europe);
 });
